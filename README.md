@@ -24,8 +24,8 @@ Benötigt Node.js ≥ 22.13 (nutzt das eingebaute `node:sqlite`). Daten liegen i
 - Registrierung/Login, Konto löschen
 - Zitate mit Person und Quelle anlegen, bearbeiten, löschen, durchsuchen
 - Sichtbarkeit pro Zitat: **privat**, **bestimmte Nutzer** oder **öffentlich** (alle angemeldeten Nutzer)
-- Ansichten: Entdecken, Meine, Mit mir geteilt, Favoriten (♥)
-- Hell-/Dunkelmodus automatisch, responsiv
+- Ansichten: Entdecken, Meine, Geteilt (mit mir), Favoriten (♥)
+- Schwarz-Weiß-Design, Hell-/Dunkelmodus automatisch, responsiv (Handy bis Desktop)
 
 ## Sicherheit
 

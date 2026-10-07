@@ -76,7 +76,7 @@ function renderAuth(mode = 'login') {
 }
 
 // ---------- Hauptansicht ----------
-const SCOPES = [['feed', 'Entdecken'], ['mine', 'Meine'], ['shared', 'Mit mir geteilt'], ['liked', 'Favoriten']];
+const SCOPES = [['feed', 'Entdecken'], ['mine', 'Meine'], ['shared', 'Geteilt'], ['liked', 'Favoriten']];
 const VIS = { private: 'Privat', shared: 'Mit Nutzern', public: 'Öffentlich' };
 const fmtDate = (t) => new Date(t).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -84,7 +84,7 @@ async function renderMain() {
   const list = h('div', { class: 'list' });
   const more = h('button', { class: 'btn more' }, 'Mehr laden');
   more.hidden = true;
-  const search = h('input', { type: 'search', class: 'search', placeholder: 'Suche nach Zitat, Person oder Quelle…', 'aria-label': 'Suche', value: state.q, maxlength: 100 });
+  const search = h('input', { type: 'search', class: 'search', placeholder: 'Zitate durchsuchen…', 'aria-label': 'Suche', value: state.q, maxlength: 100 });
 
   let timer;
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value.trim(); load(true); }, 250); });
