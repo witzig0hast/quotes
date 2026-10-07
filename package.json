@@ -1,0 +1,20 @@
+{
+  "name": "quotes",
+  "version": "1.0.0",
+  "description": "Zitate von Personen speichern und mit anderen teilen",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/api.test.js"
+  },
+  "dependencies": {
+    "express": "^4.22.3",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0"
+  }
+}
