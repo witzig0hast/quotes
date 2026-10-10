@@ -7,6 +7,7 @@ import {
   hashPassword, verifyPassword, DUMMY_HASH, createSession, getSession,
   destroySession, cookieOptions, safeEqual, COOKIE,
 } from './auth.js';
+import { OidcError } from './oidc.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const PAGE_SIZE = 20;
@@ -38,7 +39,23 @@ function validateQuote(body) {
   return { text, person, source, visibility, shareWith };
 }
 
-export function createApp({ db, secureCookies = process.env.NODE_ENV === 'production' } = {}) {
+const BIND_COOKIE = 'oidc_bind';
+const UNUSABLE_HASH = '!'; // SSO-Konten haben kein Passwort; verifyPassword() lehnt das immer ab.
+
+const getCookie = (req, name) => {
+  const raw = (req.headers.cookie || '').split(';').map((c) => c.trim()).find((c) => c.startsWith(`${name}=`));
+  if (!raw) return null;
+  try { return decodeURIComponent(raw.slice(name.length + 1)); } catch { return null; }
+};
+
+function usernameBase(claims) {
+  const src = claims.preferredUsername || claims.email.split('@')[0] || claims.name || 'user';
+  let u = src.replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 26);
+  return u.length >= 3 ? u : `user_${u}`.slice(0, 26);
+}
+
+export function createApp({ db, oidc = null, secureCookies = process.env.NODE_ENV === 'production' } = {}) {
+  const passwordLogin = !oidc || oidc.passwordLogin;
   const app = express();
   app.disable('x-powered-by');
   if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
@@ -67,8 +84,7 @@ export function createApp({ db, secureCookies = process.env.NODE_ENV === 'produc
 
   // --- Session laden + CSRF-Schutz ---
   app.use('/api', (req, res, next) => {
-    const raw = (req.headers.cookie || '').split(';').map((c) => c.trim()).find((c) => c.startsWith(`${COOKIE}=`));
-    const token = raw ? decodeURIComponent(raw.slice(COOKIE.length + 1)) : null;
+    const token = getCookie(req, COOKIE);
     const s = getSession(db, token);
     req.sessionToken = token;
     req.session = s;
@@ -97,7 +113,14 @@ export function createApp({ db, secureCookies = process.env.NODE_ENV === 'produc
   };
 
   // --- Auth ---
-  app.post('/api/register', authLimiter, async (req, res, next) => {
+  const needPasswordLogin = (req, res, next) =>
+    (passwordLogin ? next() : next(new HttpError(403, 'Anmeldung mit Passwort ist deaktiviert. Bitte SSO verwenden.')));
+
+  app.get('/api/config', (req, res) => {
+    res.json({ sso: oidc ? { name: oidc.name } : null, passwordLogin });
+  });
+
+  app.post('/api/register', needPasswordLogin, authLimiter, async (req, res, next) => {
     try {
       const username = clean(req.body.username, 30);
       const password = typeof req.body.password === 'string' ? req.body.password : '';
@@ -117,7 +140,7 @@ export function createApp({ db, secureCookies = process.env.NODE_ENV === 'produc
     } catch (e) { next(e); }
   });
 
-  app.post('/api/login', authLimiter, async (req, res, next) => {
+  app.post('/api/login', needPasswordLogin, authLimiter, async (req, res, next) => {
     try {
       const username = clean(req.body.username, 30);
       const password = typeof req.body.password === 'string' ? req.body.password.slice(0, 200) : '';
@@ -136,14 +159,86 @@ export function createApp({ db, secureCookies = process.env.NODE_ENV === 'produc
   });
 
   app.get('/api/me', (req, res) => {
-    res.json(req.session ? { user: req.user, csrf: req.session.csrf } : { user: null });
+    if (!req.session) return res.json({ user: null });
+    const { password_hash: ph } = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+    res.json({ user: { ...req.user, sso: ph === UNUSABLE_HASH }, csrf: req.session.csrf });
   });
+
+  // --- SSO (OpenID Connect) ---
+  if (oidc) {
+    const bindOpts = { httpOnly: true, sameSite: 'lax', secure: secureCookies, path: '/api/auth/oidc' }; // Lax: Rücksprung vom IdP ist cross-site
+    const fail = (res, code) => res.redirect(302, `/?sso_error=${encodeURIComponent(code)}`);
+
+    app.get('/api/auth/oidc/login', authLimiter, async (req, res) => {
+      try {
+        const { url, bind } = await oidc.begin(db);
+        res.cookie(BIND_COOKIE, bind, { ...bindOpts, maxAge: 10 * 60 * 1000 });
+        res.redirect(302, url);
+      } catch (e) {
+        console.error('[oidc] login:', e.message);
+        fail(res, 'provider_error');
+      }
+    });
+
+    app.get('/api/auth/oidc/callback', authLimiter, async (req, res) => {
+      const bind = getCookie(req, BIND_COOKIE);
+      res.clearCookie(BIND_COOKIE, bindOpts);
+      try {
+        const q = (k) => (typeof req.query[k] === 'string' ? req.query[k] : undefined);
+        const claims = await oidc.complete(db, { state: q('state'), code: q('code'), error: q('error'), bind });
+        const user = findOrCreateSsoUser(claims);
+        if (req.sessionToken) destroySession(db, req.sessionToken);
+        const sess = createSession(db, user.id);
+        res.cookie(COOKIE, sess.token, cookieOptions(secureCookies));
+        res.redirect(302, '/');
+      } catch (e) {
+        if (e instanceof OidcError) {
+          console.warn(`[oidc] callback abgelehnt (${e.code}): ${e.message}`);
+          return fail(res, e.code);
+        }
+        console.error('[oidc] callback:', e);
+        fail(res, 'failed');
+      }
+    });
+
+    function findOrCreateSsoUser(claims) {
+      const existing = db.prepare(`SELECT u.id, u.username FROM identities i JOIN users u ON u.id = i.user_id
+                                   WHERE i.issuer = ? AND i.sub = ?`).get(oidc.issuer, claims.sub);
+      if (existing) return existing;
+      if (!oidc.allowSignup) throw new OidcError('signup_disabled', 'Selbstregistrierung per SSO ist deaktiviert');
+      // Bewusst KEINE automatische Verknüpfung mit bestehenden Konten gleichen Namens/gleicher E-Mail (Account-Takeover).
+      const base = usernameBase(claims);
+      for (let i = 0; i < 8; i++) {
+        const username = i === 0 ? base : `${base}${Math.floor(1000 + Math.random() * 9000)}`;
+        try {
+          return tx(() => {
+            const id = Number(db.prepare('INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)')
+              .run(username, UNUSABLE_HASH, Date.now()).lastInsertRowid);
+            db.prepare('INSERT INTO identities (issuer, sub, user_id) VALUES (?,?,?)').run(oidc.issuer, claims.sub, id);
+            return { id, username };
+          });
+        } catch (e) {
+          if (!String(e.message).includes('UNIQUE')) throw e;
+          // Race: gleiche Identität inzwischen angelegt?
+          const again = db.prepare(`SELECT u.id, u.username FROM identities i JOIN users u ON u.id = i.user_id
+                                    WHERE i.issuer = ? AND i.sub = ?`).get(oidc.issuer, claims.sub);
+          if (again) return again;
+        }
+      }
+      throw new OidcError('failed', 'Kein freier Benutzername gefunden');
+    }
+  }
 
   app.delete('/api/me', requireAuth, writeLimiter, async (req, res, next) => {
     try {
-      const password = typeof req.body?.password === 'string' ? req.body.password : '';
       const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
-      if (!(await verifyPassword(password, row.password_hash))) throw new HttpError(403, 'Passwort falsch.');
+      if (row.password_hash === UNUSABLE_HASH) {
+        // SSO-Konto ohne Passwort: Bestätigung durch Eintippen des Benutzernamens
+        if (req.body?.confirm !== req.user.username) throw new HttpError(403, 'Benutzername stimmt nicht.');
+      } else {
+        const password = typeof req.body?.password === 'string' ? req.body.password : '';
+        if (!(await verifyPassword(password, row.password_hash))) throw new HttpError(403, 'Passwort falsch.');
+      }
       db.prepare('DELETE FROM users WHERE id = ?').run(req.user.id);
       res.clearCookie(COOKIE, { path: '/' });
       res.json({ ok: true });

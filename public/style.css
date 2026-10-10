@@ -116,7 +116,7 @@ dialog h2 { margin: 0 0 2px; font-family: var(--serif); font-size: 1.7rem; lette
 .fab { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); z-index: 5;
   min-height: 52px; padding: 0 24px; font-size: 1rem; box-shadow: 0 8px 28px #0004; }
 .toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px); opacity: 0; pointer-events: none; z-index: 100;
-  background: var(--invert-bg); color: var(--invert-fg); padding: 10px 20px; border-radius: 999px; font-weight: 600; transition: .25s; max-width: calc(100vw - 32px); }
+  background: var(--invert-bg); color: var(--invert-fg); padding: 11px 20px; border-radius: 18px; font-weight: 600; text-align: center; transition: .25s; width: max-content; max-width: calc(100vw - 32px); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* Kleine Handys: Dialoge als Bottom-Sheet, kompaktere Nav */
@@ -147,3 +147,9 @@ dialog h2 { margin: 0 0 2px; font-family: var(--serif); font-size: 1.7rem; lette
 @media (hover: none) { .btn:hover { background: transparent; color: inherit; } .btn.primary:hover { background: var(--invert-bg); color: var(--invert-fg); opacity: 1; } .quote:hover { border-color: var(--line); } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 @media print { .nav, .fab, .toolbar, .actions { display: none; } }
+
+/* SSO */
+a.btn { text-decoration: none; }
+.btn.block.sso { margin-top: 4px; }
+.or { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; margin: 20px 0 14px; }
+.or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }

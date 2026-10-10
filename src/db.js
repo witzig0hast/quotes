@@ -43,6 +43,23 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     );
     CREATE INDEX IF NOT EXISTS idx_shares_user ON quote_shares(user_id);
 
+    -- SSO: Verknüpfung (Issuer, Subject) -> lokaler Nutzer. Nie per E-Mail/Username verknüpfen.
+    CREATE TABLE IF NOT EXISTS identities (
+      issuer  TEXT NOT NULL,
+      sub     TEXT NOT NULL,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (issuer, sub)
+    );
+
+    -- Laufende Logins (einmalig verwendbar, 10 Minuten gültig)
+    CREATE TABLE IF NOT EXISTS oidc_flows (
+      state_hash TEXT PRIMARY KEY,
+      bind_hash  TEXT NOT NULL,
+      nonce      TEXT NOT NULL,
+      verifier   TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS likes (
       quote_id INTEGER NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
       user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

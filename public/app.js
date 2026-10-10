@@ -1,7 +1,15 @@
 // Bewusst ohne innerHTML: alle Nutzerinhalte werden per textContent gesetzt (XSS-sicher).
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
-const state = { user: null, csrf: null, scope: 'feed', q: '', page: 1 };
+const state = { user: null, csrf: null, scope: 'feed', q: '', page: 1, config: { sso: null, passwordLogin: true } };
+
+const SSO_ERRORS = {
+  access_denied: 'Anmeldung wurde abgebrochen oder abgelehnt.',
+  signup_disabled: 'Für dieses SSO-Konto ist keine Registrierung erlaubt. Bitte einen Administrator kontaktieren.',
+  invalid_state: 'Die Anmeldung ist abgelaufen. Bitte erneut versuchen.',
+  invalid_token: 'Die Anmeldung konnte nicht verifiziert werden.',
+  provider_error: 'Der SSO-Anbieter ist gerade nicht erreichbar.',
+};
 
 function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
@@ -63,16 +71,21 @@ function renderAuth(mode = 'login') {
   isReg ? h('div', { class: 'hint' }, 'Mindestens 10 Zeichen.') : null,
   err, btn);
 
+  const { sso, passwordLogin } = state.config;
+  const ssoBtn = sso ? h('a', { class: 'btn primary block sso', href: '/api/auth/oidc/login' }, `Mit ${sso.name} anmelden`) : null;
+  const pwBlock = passwordLogin ? [
+    h('div', { class: 'tabs', role: 'tablist' },
+      h('button', { role: 'tab', 'aria-selected': String(!isReg), onclick: () => renderAuth('login') }, 'Anmelden'),
+      h('button', { role: 'tab', 'aria-selected': String(isReg), onclick: () => renderAuth('register') }, 'Registrieren')),
+    form] : [];
+  const divider = ssoBtn && passwordLogin ? h('div', { class: 'or' }, h('span', {}, 'oder mit Passwort')) : null;
+
   $app.replaceChildren(h('main', { class: 'container' }, h('div', { class: 'auth' },
     h('div', { class: 'logo auth-logo' }, h('i', {}, '“'), 'Quotes'),
     h('h1', {}, 'Worte, die bleiben.'),
     h('p', { class: 'lead' }, 'Sammle Zitate von Menschen, die dich inspirieren – privat oder geteilt mit anderen.'),
-    h('div', { class: 'card' },
-      h('div', { class: 'tabs', role: 'tablist' },
-        h('button', { role: 'tab', 'aria-selected': String(!isReg), onclick: () => renderAuth('login') }, 'Anmelden'),
-        h('button', { role: 'tab', 'aria-selected': String(isReg), onclick: () => renderAuth('register') }, 'Registrieren')),
-      form))));
-  user.focus();
+    h('div', { class: 'card' }, ssoBtn, divider, pwBlock))));
+  if (passwordLogin) user.focus();
 }
 
 // ---------- Hauptansicht ----------
@@ -209,17 +222,19 @@ function openEditor(q) {
 function openAccount() {
   const dlg = h('dialog');
   const err = h('p', { class: 'error', role: 'alert' });
-  const pass = h('input', { type: 'password', autocomplete: 'current-password', required: true, maxlength: 200 });
+  const sso = !!state.user.sso;
+  const pass = h('input', { type: sso ? 'text' : 'password', autocomplete: sso ? 'off' : 'current-password', required: true, maxlength: 200, autocapitalize: 'none', spellcheck: 'false' });
   const form = h('form', {
     onsubmit: async (e) => {
       e.preventDefault(); err.textContent = '';
       if (!confirm('Konto und alle Zitate endgültig löschen?')) return;
-      try { await api('DELETE', '/api/me', { password: pass.value }); dlg.close(); state.user = null; state.csrf = null; render(); toast('Konto gelöscht'); }
+      try { await api('DELETE', '/api/me', sso ? { confirm: pass.value } : { password: pass.value }); dlg.close(); state.user = null; state.csrf = null; render(); toast('Konto gelöscht'); }
       catch (ex) { err.textContent = ex.message; }
     },
   },
   h('h2', {}, 'Konto'), h('p', { class: 'hint' }, `Angemeldet als @${state.user.username}`),
-  h('label', {}, 'Konto löschen – Passwort bestätigen'), pass, err,
+  h('label', {}, sso ? 'Konto löschen – Benutzernamen eintippen' : 'Konto löschen – Passwort bestätigen'), pass,
+  sso ? h('div', { class: 'hint' }, 'Dein Konto wird über SSO verwaltet und hat kein Passwort.') : null, err,
   h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Schließen'),
     h('button', { class: 'btn danger', type: 'submit' }, 'Konto löschen')));
   dlg.append(form);
@@ -236,6 +251,13 @@ async function logout() {
 function render() { state.user ? renderMain() : renderAuth(); }
 
 (async () => {
+  try { state.config = await api('GET', '/api/config'); } catch { /* Standard */ }
+  const params = new URLSearchParams(location.search);
+  if (params.has('sso_error')) {
+    const code = params.get('sso_error');
+    history.replaceState(null, '', location.pathname);
+    setTimeout(() => toast(SSO_ERRORS[code] || 'SSO-Anmeldung fehlgeschlagen.'), 100);
+  }
   try {
     const r = await api('GET', '/api/me');
     state.user = r.user; state.csrf = r.csrf ?? null;

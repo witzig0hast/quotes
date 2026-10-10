@@ -10,11 +10,12 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test test/api.test.js"
+    "test": "node --test --test-force-exit test/api.test.js test/oidc.test.js"
   },
   "dependencies": {
     "express": "^4.22.3",
     "express-rate-limit": "^8.7.1",
-    "helmet": "^8.3.0"
+    "helmet": "^8.3.0",
+    "jose": "^6.2.12"
   }
 }
