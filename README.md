@@ -20,6 +20,15 @@ Benötigt Node.js ≥ 22.13 (nutzt das eingebaute `node:sqlite`). Daten liegen i
 | `TRUST_PROXY` | Anzahl Proxys (z. B. `1`), damit Rate-Limits die echte Client-IP nutzen |
 | `OIDC_*`, `PUBLIC_URL` | SSO, siehe unten |
 
+## Docker
+
+```bash
+cp .env.example .env     # PUBLIC_URL und ggf. OIDC_* eintragen
+docker compose up -d --build
+```
+
+Die App lauscht auf `127.0.0.1:3000` (Reverse-Proxy mit HTTPS davorschalten, z. B. Traefik/Caddy/nginx im selben Netzwerk wie authentik). Daten liegen im Volume `quotes-data` (`/data/quotes.db`). Der Container läuft als Nicht-Root, mit read-only-Dateisystem und ohne Linux-Capabilities.
+
 ## Funktionen
 
 - Registrierung/Login mit Passwort **oder SSO (OpenID Connect, z. B. authentik)**, Konto löschen

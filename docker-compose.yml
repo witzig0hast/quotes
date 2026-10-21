@@ -1,0 +1,25 @@
+# Läuft neben authentik: im selben Docker-Netzwerk (siehe "networks") ist authentik per Servicename erreichbar,
+# für OIDC_ISSUER wird aber die öffentliche URL genutzt (muss mit dem Issuer von authentik übereinstimmen).
+services:
+  quotes:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "1"            # hinter Reverse-Proxy (Traefik/Caddy/nginx)
+    ports:
+      - "127.0.0.1:3000:3000"     # nur lokal; den Reverse-Proxy davorschalten
+    volumes:
+      - quotes-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  quotes-data:
+
+# Optional: gemeinsames Netzwerk mit authentik / Reverse-Proxy
+# networks:
+#   default:
+#     name: authentik_default
+#     external: true
