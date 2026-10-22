@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import {
   hashPassword, verifyPassword, DUMMY_HASH, createSession, getSession,
   destroySession, cookieOptions, safeEqual, COOKIE,
@@ -20,6 +21,15 @@ const bad = (msg) => new HttpError(400, msg);
 
 const clean = (v, max) => (typeof v === 'string' ? v.replace(/\r\n/g, '\n').trim() : '').slice(0, max + 1);
 
+const USERNAME_RE = /^[A-Za-z0-9_.-]{3,30}$/;
+const MAX_MENTIONS = 20;
+
+const usernameList = (v, what) => {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) throw bad(`Ungültige Liste: ${what}.`);
+  return [...new Set(v.map((n) => clean(n, 31).replace(/^@/, '').toLowerCase()).filter(Boolean))];
+};
+
 function validateQuote(body) {
   const text = clean(body.text, 1000);
   const person = clean(body.person, 100);
@@ -31,12 +41,16 @@ function validateQuote(body) {
   if (person.length > 100) throw bad('Der Name ist zu lang (max. 100 Zeichen).');
   if (source.length > 150) throw bad('Die Quelle ist zu lang (max. 150 Zeichen).');
   if (!VISIBILITIES.includes(visibility)) throw bad('Ungültige Sichtbarkeit.');
-  let shareWith = [];
+  const mentions = usernameList(body.mentions, 'Markierungen');
+  if (mentions.length > MAX_MENTIONS) throw bad(`Höchstens ${MAX_MENTIONS} Personen markieren.`);
+  let shareWith = [], shareGroups = [];
   if (visibility === 'shared') {
-    if (!Array.isArray(body.shareWith)) throw bad('Ungültige Empfängerliste.');
-    shareWith = [...new Set(body.shareWith.map((n) => clean(n, 30).toLowerCase()).filter(Boolean))].slice(0, 50);
+    shareWith = usernameList(body.shareWith ?? [], 'Empfänger').slice(0, 50);
+    if (body.shareGroups !== undefined && !Array.isArray(body.shareGroups)) throw bad('Ungültige Gruppenliste.');
+    shareGroups = [...new Set((body.shareGroups ?? []).map(Number))];
+    if (shareGroups.length > 20 || shareGroups.some((g) => !Number.isSafeInteger(g) || g < 1)) throw bad('Ungültige Gruppenliste.');
   }
-  return { text, person, source, visibility, shareWith };
+  return { text, person, source, visibility, shareWith, shareGroups, mentions };
 }
 
 const BIND_COOKIE = 'oidc_bind';
@@ -97,6 +111,11 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     next();
   });
 
+  const tx = (fn) => {
+    db.exec('BEGIN');
+    try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
+  };
+
   const requireAuth = (req, res, next) => (req.user ? next() : next(new HttpError(401, 'Bitte anmelden.')));
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false,
@@ -104,6 +123,10 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   });
   const writeLimiter = rateLimit({
     windowMs: 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false,
+    message: { error: 'Zu viele Anfragen. Bitte kurz warten.' },
+  });
+  const readLimiter = rateLimit({
+    windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false,
     message: { error: 'Zu viele Anfragen. Bitte kurz warten.' },
   });
 
@@ -124,7 +147,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     try {
       const username = clean(req.body.username, 30);
       const password = typeof req.body.password === 'string' ? req.body.password : '';
-      if (!/^[A-Za-z0-9_.-]{3,30}$/.test(username)) throw bad('Benutzername: 3–30 Zeichen (Buchstaben, Zahlen, _ . -).');
+      if (!USERNAME_RE.test(username)) throw bad('Benutzername: 3–30 Zeichen (Buchstaben, Zahlen, _ . -).');
       if (password.length < 10) throw bad('Das Passwort muss mindestens 10 Zeichen lang sein.');
       if (password.length > 200) throw bad('Das Passwort ist zu lang.');
       const hash = await hashPassword(password);
@@ -160,8 +183,23 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
 
   app.get('/api/me', (req, res) => {
     if (!req.session) return res.json({ user: null });
-    const { password_hash: ph } = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
-    res.json({ user: { ...req.user, sso: ph === UNUSABLE_HASH }, csrf: req.session.csrf });
+    const row = db.prepare('SELECT password_hash, username_set FROM users WHERE id = ?').get(req.user.id);
+    res.json({ user: { ...req.user, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set }, csrf: req.session.csrf });
+  });
+
+  // Benutzernamen ändern (bzw. beim ersten SSO-Login festlegen). Markierungen/Freigaben hängen an der ID, nicht am Namen.
+  app.put('/api/me/username', requireAuth, writeLimiter, (req, res, next) => {
+    try {
+      const username = clean(req.body.username, 30);
+      if (!USERNAME_RE.test(username)) throw bad('Benutzername: 3–30 Zeichen (Buchstaben, Zahlen, _ . -).');
+      try {
+        db.prepare('UPDATE users SET username = ?, username_set = 1 WHERE id = ?').run(username, req.user.id);
+      } catch (e) {
+        if (String(e.message).includes('UNIQUE')) throw new HttpError(409, 'Dieser Benutzername ist bereits vergeben.');
+        throw e;
+      }
+      res.json({ user: { id: req.user.id, username } });
+    } catch (e) { next(e); }
   });
 
   // --- SSO (OpenID Connect) ---
@@ -212,7 +250,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
         const username = i === 0 ? base : `${base}${Math.floor(1000 + Math.random() * 9000)}`;
         try {
           return tx(() => {
-            const id = Number(db.prepare('INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)')
+            // username_set = 0: Name ist nur ein Vorschlag aus dem SSO, der Nutzer wählt beim ersten Login selbst
+            const id = Number(db.prepare('INSERT INTO users (username, password_hash, created_at, username_set) VALUES (?,?,?,0)')
               .run(username, UNUSABLE_HASH, Date.now()).lastInsertRowid);
             db.prepare('INSERT INTO identities (issuer, sub, user_id) VALUES (?,?,?)').run(oidc.issuer, claims.sub, id);
             return { id, username };
@@ -245,108 +284,181 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     } catch (e) { next(e); }
   });
 
-  // --- Zitate ---
+  // --- Zugriffsregeln ---
+  // "Für mich": markiert ODER (geteilt UND (direkt ODER über eine Gruppe, in der ich Mitglied bin))
+  const FOR_ME = `(EXISTS(SELECT 1 FROM quote_mentions m WHERE m.quote_id = q.id AND m.user_id = @me)
+    OR (q.visibility = 'shared' AND (
+         EXISTS(SELECT 1 FROM quote_shares s WHERE s.quote_id = q.id AND s.user_id = @me)
+      OR EXISTS(SELECT 1 FROM quote_groups qg JOIN group_members gm ON gm.group_id = qg.group_id
+                WHERE qg.quote_id = q.id AND gm.user_id = @me))))`;
+  const ACCESS = `(q.user_id = @me OR q.visibility = 'public' OR ${FOR_ME})`;
   const BASE = `
-    SELECT q.id, q.text, q.person, q.source, q.visibility, q.created_at AS createdAt,
+    SELECT q.id, q.text, q.person, q.source, q.visibility, q.share_token AS shareToken, q.created_at AS createdAt,
            u.username AS author, (q.user_id = @me) AS mine,
            (SELECT COUNT(*) FROM likes l WHERE l.quote_id = q.id) AS likes,
            EXISTS(SELECT 1 FROM likes l WHERE l.quote_id = q.id AND l.user_id = @me) AS liked
     FROM quotes q JOIN users u ON u.id = q.user_id`;
-  const ACCESS = `(q.user_id = @me OR q.visibility = 'public'
-                   OR (q.visibility = 'shared' AND EXISTS(SELECT 1 FROM quote_shares s WHERE s.quote_id = q.id AND s.user_id = @me)))`;
   const escapeLike = (s) => s.replace(/[\\%_]/g, '\\$&');
+  const placeholders = (arr) => arr.map(() => '?').join(',');
 
-  const sharedWithMap = (ids) => {
-    if (!ids.length) return new Map();
-    const rows = db.prepare(`SELECT s.quote_id, u.username FROM quote_shares s JOIN users u ON u.id = s.user_id
-                             WHERE s.quote_id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+  const groupBy = (rows, key, val) => {
     const m = new Map();
-    for (const r of rows) (m.get(r.quote_id) ?? m.set(r.quote_id, []).get(r.quote_id)).push(r.username);
+    for (const r of rows) (m.get(r[key]) ?? m.set(r[key], []).get(r[key])).push(val(r));
     return m;
   };
 
   const shape = (rows) => {
-    const shares = sharedWithMap(rows.filter((r) => r.mine && r.visibility === 'shared').map((r) => r.id));
+    if (!rows.length) return [];
+    const ids = rows.map((r) => r.id);
+    const own = rows.filter((r) => r.mine).map((r) => r.id);
+    const mentions = groupBy(db.prepare(`SELECT m.quote_id, u.username FROM quote_mentions m JOIN users u ON u.id = m.user_id
+      WHERE m.quote_id IN (${placeholders(ids)}) ORDER BY u.username`).all(...ids), 'quote_id', (r) => r.username);
+    const shares = own.length ? groupBy(db.prepare(`SELECT s.quote_id, u.username FROM quote_shares s JOIN users u ON u.id = s.user_id
+      WHERE s.quote_id IN (${placeholders(own)}) ORDER BY u.username`).all(...own), 'quote_id', (r) => r.username) : new Map();
+    const groups = own.length ? groupBy(db.prepare(`SELECT qg.quote_id, g.id, g.name FROM quote_groups qg JOIN user_groups g ON g.id = qg.group_id
+      WHERE qg.quote_id IN (${placeholders(own)}) ORDER BY g.name`).all(...own), 'quote_id', (r) => ({ id: r.id, name: r.name })) : new Map();
     return rows.map((r) => ({
-      id: r.id, text: r.text, person: r.person, source: r.source, visibility: r.mine ? r.visibility : undefined,
-      createdAt: r.createdAt, author: r.author, mine: !!r.mine, likes: r.likes, liked: !!r.liked,
-      shareWith: r.mine && r.visibility === 'shared' ? shares.get(r.id) ?? [] : undefined,
+      id: r.id, text: r.text, person: r.person, source: r.source, createdAt: r.createdAt, author: r.author,
+      mine: !!r.mine, likes: r.likes, liked: !!r.liked, mentions: mentions.get(r.id) ?? [],
+      // Nur für den Eigentümer: Sichtbarkeit, Empfänger, Gruppen, Freigabe-Link
+      ...(r.mine ? {
+        visibility: r.visibility,
+        shareWith: r.visibility === 'shared' ? shares.get(r.id) ?? [] : [],
+        shareGroups: r.visibility === 'shared' ? groups.get(r.id) ?? [] : [],
+        link: r.shareToken ? `/s/${r.shareToken}` : null,
+      } : {}),
     }));
   };
 
-  app.get('/api/quotes', requireAuth, (req, res) => {
-    const scope = ['mine', 'feed', 'shared', 'liked'].includes(req.query.scope) ? req.query.scope : 'feed';
-    const q = clean(String(req.query.q ?? ''), 100).slice(0, 100);
-    const page = Math.max(1, Math.min(1000, parseInt(req.query.page, 10) || 1));
-    const where = [];
-    const params = { me: req.user.id, limit: PAGE_SIZE + 1, offset: (page - 1) * PAGE_SIZE };
-    if (scope === 'mine') where.push('q.user_id = @me');
-    else if (scope === 'shared') where.push(`q.user_id != @me AND q.visibility = 'shared' AND EXISTS(SELECT 1 FROM quote_shares s WHERE s.quote_id = q.id AND s.user_id = @me)`);
-    else if (scope === 'liked') where.push(`${ACCESS} AND EXISTS(SELECT 1 FROM likes l WHERE l.quote_id = q.id AND l.user_id = @me)`);
-    else where.push(`q.visibility = 'public'`);
-    if (q) {
-      where.push(`(q.text LIKE @q ESCAPE '\\' OR q.person LIKE @q ESCAPE '\\' OR q.source LIKE @q ESCAPE '\\')`);
-      params.q = `%${escapeLike(q)}%`;
-    }
-    const rows = db.prepare(`${BASE} WHERE ${where.join(' AND ')} ORDER BY q.created_at DESC, q.id DESC LIMIT @limit OFFSET @offset`).all(params);
-    const hasMore = rows.length > PAGE_SIZE;
-    res.json({ quotes: shape(rows.slice(0, PAGE_SIZE)), hasMore });
-  });
-
-  function resolveRecipients(usernames, ownerId) {
-    if (!usernames.length) return [];
-    const rows = db.prepare(`SELECT id, username FROM users WHERE username IN (${usernames.map(() => '?').join(',')})`).all(...usernames);
-    const found = new Set(rows.map((r) => r.username.toLowerCase()));
-    const missing = usernames.filter((n) => !found.has(n));
-    if (missing.length) throw bad(`Unbekannte Nutzer: ${missing.slice(0, 5).join(', ')}`);
-    return rows.filter((r) => r.id !== ownerId);
-  }
-
-  function saveShares(quoteId, visibility, recipients) {
-    db.prepare('DELETE FROM quote_shares WHERE quote_id = ?').run(quoteId);
-    if (visibility !== 'shared') return;
-    const ins = db.prepare('INSERT INTO quote_shares (quote_id, user_id) VALUES (?,?)');
-    for (const r of recipients) ins.run(quoteId, r.id);
-  }
-
-  const tx = (fn) => {
-    db.exec('BEGIN');
-    try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
-  };
-
-  const getOne = (id, me) => shape(db.prepare(`${BASE} WHERE q.id = @id AND ${ACCESS}`).all({ id, me }))[0];
-  const idParam = (req) => {
-    const id = Number(req.params.id);
+  const idParam = (req, name = 'id') => {
+    const id = Number(req.params[name]);
     if (!Number.isSafeInteger(id) || id < 1) throw new HttpError(404, 'Nicht gefunden.');
     return id;
   };
+  const getOne = (id, me) => shape(db.prepare(`${BASE} WHERE q.id = @id AND ${ACCESS}`).all({ id, me }))[0];
+  const memberRole = (groupId, userId) =>
+    db.prepare('SELECT role FROM group_members WHERE group_id = ? AND user_id = ?').get(groupId, userId)?.role ?? null;
+
+  // --- Benachrichtigungen ---
+  const notifyStmt = db.prepare('INSERT INTO notifications (user_id, type, actor_id, quote_id, group_id, created_at) VALUES (?,?,?,?,?,?)');
+  const notify = (userIds, type, actorId, { quoteId = null, groupId = null } = {}) => {
+    const now = Date.now();
+    for (const uid of userIds) if (uid !== actorId) notifyStmt.run(uid, type, actorId, quoteId, groupId, now);
+  };
+
+  // --- Nutzersuche (für Markieren/Teilen/Gruppen) ---
+  app.get('/api/users', requireAuth, readLimiter, (req, res) => {
+    const q = clean(String(req.query.q ?? ''), 30).replace(/^@/, '').slice(0, 30);
+    if (!q) return res.json({ users: [] });
+    const rows = db.prepare(`SELECT username FROM users WHERE username LIKE ? ESCAPE '\\' AND id != ?
+                             ORDER BY length(username), username LIMIT 8`).all(`${escapeLike(q)}%`, req.user.id);
+    res.json({ users: rows.map((r) => r.username) });
+  });
+
+  // --- Zitate ---
+  app.get('/api/quotes', requireAuth, (req, res, next) => {
+    try {
+      const scope = ['mine', 'feed', 'shared', 'liked', 'group'].includes(req.query.scope) ? req.query.scope : 'feed';
+      const q = clean(String(req.query.q ?? ''), 100).slice(0, 100);
+      const page = Math.max(1, Math.min(1000, parseInt(req.query.page, 10) || 1));
+      const where = [];
+      const params = { me: req.user.id, limit: PAGE_SIZE + 1, offset: (page - 1) * PAGE_SIZE };
+      if (scope === 'mine') where.push('q.user_id = @me');
+      else if (scope === 'shared') where.push(`q.user_id != @me AND ${FOR_ME}`);
+      else if (scope === 'liked') where.push(`${ACCESS} AND EXISTS(SELECT 1 FROM likes l WHERE l.quote_id = q.id AND l.user_id = @me)`);
+      else if (scope === 'group') {
+        const gid = Number(req.query.group);
+        if (!Number.isSafeInteger(gid) || !memberRole(gid, req.user.id)) throw new HttpError(404, 'Gruppe nicht gefunden.');
+        params.gid = gid;
+        where.push(`q.visibility = 'shared' AND EXISTS(SELECT 1 FROM quote_groups qg WHERE qg.quote_id = q.id AND qg.group_id = @gid)`);
+      } else where.push(`q.visibility = 'public'`);
+      if (q) {
+        where.push(`(q.text LIKE @q ESCAPE '\\' OR q.person LIKE @q ESCAPE '\\' OR q.source LIKE @q ESCAPE '\\')`);
+        params.q = `%${escapeLike(q)}%`;
+      }
+      const rows = db.prepare(`${BASE} WHERE ${where.join(' AND ')} ORDER BY q.created_at DESC, q.id DESC LIMIT @limit OFFSET @offset`).all(params);
+      res.json({ quotes: shape(rows.slice(0, PAGE_SIZE)), hasMore: rows.length > PAGE_SIZE });
+    } catch (e) { next(e); }
+  });
+
+  app.get('/api/quotes/:id', requireAuth, (req, res, next) => {
+    try {
+      const quote = getOne(idParam(req), req.user.id);
+      if (!quote) throw new HttpError(404, 'Nicht gefunden.');
+      res.json(quote);
+    } catch (e) { next(e); }
+  });
+
+  function resolveUsers(usernames, what) {
+    if (!usernames.length) return [];
+    const rows = db.prepare(`SELECT id, username FROM users WHERE username IN (${placeholders(usernames)})`).all(...usernames);
+    const found = new Set(rows.map((r) => r.username.toLowerCase()));
+    const missing = usernames.filter((n) => !found.has(n));
+    if (missing.length) throw bad(`Unbekannte Nutzer (${what}): ${missing.slice(0, 5).join(', ')}`);
+    return rows;
+  }
+
+  function resolveGroups(groupIds, userId) {
+    if (!groupIds.length) return [];
+    const rows = db.prepare(`SELECT group_id FROM group_members WHERE user_id = ? AND group_id IN (${placeholders(groupIds)})`)
+      .all(userId, ...groupIds);
+    if (rows.length !== groupIds.length) throw bad('Du kannst nur mit Gruppen teilen, in denen du Mitglied bist.');
+    return groupIds;
+  }
+
+  /** Speichert Freigaben/Gruppen/Markierungen und benachrichtigt nur NEU hinzugekommene Personen. */
+  function saveRelations(quoteId, ownerId, v) {
+    const ids = (sql) => new Set(db.prepare(sql).all(quoteId).map((r) => r.user_id));
+    const prevMentions = ids('SELECT user_id FROM quote_mentions WHERE quote_id = ?');
+    const prevShares = ids('SELECT user_id FROM quote_shares WHERE quote_id = ?');
+
+    const mentioned = resolveUsers(v.mentions, 'Markierungen').map((r) => r.id).filter((id) => id !== ownerId);
+    const shared = v.visibility === 'shared' ? resolveUsers(v.shareWith, 'Teilen').map((r) => r.id).filter((id) => id !== ownerId) : [];
+    const groups = v.visibility === 'shared' ? resolveGroups(v.shareGroups, ownerId) : [];
+
+    for (const t of ['quote_mentions', 'quote_shares', 'quote_groups']) db.prepare(`DELETE FROM ${t} WHERE quote_id = ?`).run(quoteId);
+    const insM = db.prepare('INSERT INTO quote_mentions (quote_id, user_id) VALUES (?,?)');
+    const insS = db.prepare('INSERT INTO quote_shares (quote_id, user_id) VALUES (?,?)');
+    const insG = db.prepare('INSERT INTO quote_groups (quote_id, group_id) VALUES (?,?)');
+    for (const id of mentioned) insM.run(quoteId, id);
+    for (const id of shared) insS.run(quoteId, id);
+    for (const id of groups) insG.run(quoteId, id);
+
+    const newMentions = mentioned.filter((id) => !prevMentions.has(id));
+    notify(newMentions, 'mention', ownerId, { quoteId });
+    // Wer markiert wurde, bekommt keine zusätzliche "geteilt"-Nachricht
+    notify(shared.filter((id) => !prevShares.has(id) && !mentioned.includes(id)), 'share', ownerId, { quoteId });
+  }
 
   app.post('/api/quotes', requireAuth, writeLimiter, (req, res, next) => {
     try {
       const v = validateQuote(req.body);
-      const recipients = resolveRecipients(v.shareWith, req.user.id);
       const id = tx(() => {
         const now = Date.now();
         const id = Number(db.prepare('INSERT INTO quotes (user_id,text,person,source,visibility,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
           .run(req.user.id, v.text, v.person, v.source, v.visibility, now, now).lastInsertRowid);
-        saveShares(id, v.visibility, recipients);
+        saveRelations(id, req.user.id, v);
         return id;
       });
       res.status(201).json(getOne(id, req.user.id));
     } catch (e) { next(e); }
   });
 
+  const requireOwnQuote = (req) => {
+    const id = idParam(req);
+    const row = db.prepare('SELECT user_id FROM quotes WHERE id = ?').get(id);
+    if (!row || row.user_id !== req.user.id) throw new HttpError(404, 'Nicht gefunden.');
+    return id;
+  };
+
   app.put('/api/quotes/:id', requireAuth, writeLimiter, (req, res, next) => {
     try {
-      const id = idParam(req);
-      const owner = db.prepare('SELECT user_id FROM quotes WHERE id = ?').get(id);
-      if (!owner || owner.user_id !== req.user.id) throw new HttpError(404, 'Nicht gefunden.');
+      const id = requireOwnQuote(req);
       const v = validateQuote(req.body);
-      const recipients = resolveRecipients(v.shareWith, req.user.id);
       tx(() => {
         db.prepare('UPDATE quotes SET text=?, person=?, source=?, visibility=?, updated_at=? WHERE id=?')
           .run(v.text, v.person, v.source, v.visibility, Date.now(), id);
-        saveShares(id, v.visibility, recipients);
+        saveRelations(id, req.user.id, v);
       });
       res.json(getOne(id, req.user.id));
     } catch (e) { next(e); }
@@ -371,7 +483,170 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     } catch (e) { next(e); }
   });
 
+  // --- Freigabe-Links: geheimes Token (192 Bit), jederzeit widerrufbar ---
+  app.post('/api/quotes/:id/link', requireAuth, writeLimiter, (req, res, next) => {
+    try {
+      const id = requireOwnQuote(req);
+      let { share_token: token } = db.prepare('SELECT share_token FROM quotes WHERE id = ?').get(id);
+      if (!token) {
+        token = randomBytes(24).toString('base64url');
+        db.prepare('UPDATE quotes SET share_token = ? WHERE id = ?').run(token, id);
+      }
+      res.json({ link: `/s/${token}` });
+    } catch (e) { next(e); }
+  });
+
+  app.delete('/api/quotes/:id/link', requireAuth, writeLimiter, (req, res, next) => {
+    try {
+      const id = requireOwnQuote(req);
+      db.prepare('UPDATE quotes SET share_token = NULL WHERE id = ?').run(id);
+      res.json({ link: null });
+    } catch (e) { next(e); }
+  });
+
+  // Öffentlich, ohne Login: nur Inhalt + Autor, keine Markierungen/Empfänger/Likes
+  app.get('/api/public/quotes/:token', readLimiter, (req, res, next) => {
+    try {
+      const token = req.params.token;
+      if (!/^[A-Za-z0-9_-]{32}$/.test(token)) throw new HttpError(404, 'Dieser Link ist ungültig oder wurde deaktiviert.');
+      const row = db.prepare(`SELECT q.text, q.person, q.source, q.created_at AS createdAt, u.username AS author
+                              FROM quotes q JOIN users u ON u.id = q.user_id WHERE q.share_token = ?`).get(token);
+      if (!row) throw new HttpError(404, 'Dieser Link ist ungültig oder wurde deaktiviert.');
+      res.set('X-Robots-Tag', 'noindex');
+      res.json(row);
+    } catch (e) { next(e); }
+  });
+
+  // --- Gruppen ---
+  const groupName = (v) => {
+    const name = clean(v, 50);
+    if (!name) throw bad('Bitte einen Gruppennamen angeben.');
+    if (name.length > 50) throw bad('Der Gruppenname ist zu lang (max. 50 Zeichen).');
+    return name;
+  };
+  const MAX_MEMBERS = 200;
+  const groupGid = (req) => {
+    const gid = idParam(req, 'gid');
+    const role = memberRole(gid, req.user.id);
+    if (!role) throw new HttpError(404, 'Gruppe nicht gefunden.');
+    return { gid, role };
+  };
+  const groupDetails = (gid, me) => {
+    const g = db.prepare('SELECT id, name, owner_id, created_at AS createdAt FROM user_groups WHERE id = ?').get(gid);
+    const members = db.prepare(`SELECT u.id, u.username, gm.role FROM group_members gm JOIN users u ON u.id = gm.user_id
+                                WHERE gm.group_id = ? ORDER BY gm.role = 'owner' DESC, u.username`).all(gid);
+    return { id: g.id, name: g.name, createdAt: g.createdAt, isOwner: g.owner_id === me, members };
+  };
+
+  app.get('/api/groups', requireAuth, (req, res) => {
+    const groups = db.prepare(`SELECT g.id, g.name, gm.role,
+                                 (SELECT COUNT(*) FROM group_members x WHERE x.group_id = g.id) AS memberCount
+                               FROM group_members gm JOIN user_groups g ON g.id = gm.group_id
+                               WHERE gm.user_id = ? ORDER BY g.name COLLATE NOCASE`).all(req.user.id);
+    res.json({ groups: groups.map((g) => ({ ...g, isOwner: g.role === 'owner' })) });
+  });
+
+  app.post('/api/groups', requireAuth, writeLimiter, (req, res, next) => {
+    try {
+      const name = groupName(req.body.name);
+      const members = resolveUsers(usernameList(req.body.members, 'Mitglieder').slice(0, MAX_MEMBERS), 'Mitglieder')
+        .filter((u) => u.id !== req.user.id);
+      const { n } = db.prepare("SELECT COUNT(*) n FROM user_groups WHERE owner_id = ?").get(req.user.id);
+      if (n >= 50) throw bad('Du kannst höchstens 50 Gruppen besitzen.');
+      const gid = tx(() => {
+        const now = Date.now();
+        const gid = Number(db.prepare('INSERT INTO user_groups (name, owner_id, created_at) VALUES (?,?,?)').run(name, req.user.id, now).lastInsertRowid);
+        const ins = db.prepare('INSERT INTO group_members (group_id, user_id, role, added_at) VALUES (?,?,?,?)');
+        ins.run(gid, req.user.id, 'owner', now);
+        for (const m of members) ins.run(gid, m.id, 'member', now);
+        notify(members.map((m) => m.id), 'group_add', req.user.id, { groupId: gid });
+        return gid;
+      });
+      res.status(201).json(groupDetails(gid, req.user.id));
+    } catch (e) { next(e); }
+  });
+
+  app.get('/api/groups/:gid', requireAuth, (req, res, next) => {
+    try { res.json(groupDetails(groupGid(req).gid, req.user.id)); } catch (e) { next(e); }
+  });
+
+  app.patch('/api/groups/:gid', requireAuth, writeLimiter, (req, res, next) => {
+    try {
+      const { gid, role } = groupGid(req);
+      if (role !== 'owner') throw new HttpError(403, 'Nur der Besitzer kann die Gruppe umbenennen.');
+      db.prepare('UPDATE user_groups SET name = ? WHERE id = ?').run(groupName(req.body.name), gid);
+      res.json(groupDetails(gid, req.user.id));
+    } catch (e) { next(e); }
+  });
+
+  app.delete('/api/groups/:gid', requireAuth, writeLimiter, (req, res, next) => {
+    try {
+      const { gid, role } = groupGid(req);
+      if (role !== 'owner') throw new HttpError(403, 'Nur der Besitzer kann die Gruppe löschen.');
+      db.prepare('DELETE FROM user_groups WHERE id = ?').run(gid);
+      res.json({ ok: true });
+    } catch (e) { next(e); }
+  });
+
+  app.post('/api/groups/:gid/members', requireAuth, writeLimiter, (req, res, next) => {
+    try {
+      const { gid, role } = groupGid(req);
+      if (role !== 'owner') throw new HttpError(403, 'Nur der Besitzer kann Mitglieder hinzufügen.');
+      const users = resolveUsers(usernameList(req.body.usernames, 'Mitglieder').slice(0, 50), 'Mitglieder');
+      const { n } = db.prepare('SELECT COUNT(*) n FROM group_members WHERE group_id = ?').get(gid);
+      if (n + users.length > MAX_MEMBERS) throw bad(`Eine Gruppe hat höchstens ${MAX_MEMBERS} Mitglieder.`);
+      tx(() => {
+        const ins = db.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id, role, added_at) VALUES (?,?,'member',?)");
+        const added = users.filter((u) => ins.run(gid, u.id, Date.now()).changes).map((u) => u.id);
+        notify(added, 'group_add', req.user.id, { groupId: gid });
+      });
+      res.json(groupDetails(gid, req.user.id));
+    } catch (e) { next(e); }
+  });
+
+  // Besitzer entfernt Mitglieder; Mitglieder können sich selbst entfernen (Gruppe verlassen)
+  app.delete('/api/groups/:gid/members/:uid', requireAuth, writeLimiter, (req, res, next) => {
+    try {
+      const { gid, role } = groupGid(req);
+      const uid = idParam(req, 'uid');
+      if (uid !== req.user.id && role !== 'owner') throw new HttpError(403, 'Nur der Besitzer kann Mitglieder entfernen.');
+      if (memberRole(gid, uid) === 'owner') throw bad('Der Besitzer kann die Gruppe nicht verlassen – lösche sie stattdessen.');
+      db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(gid, uid);
+      res.json({ ok: true });
+    } catch (e) { next(e); }
+  });
+
+  // --- Benachrichtigungen ---
+  // Nur anzeigen, was der Nutzer (noch) sehen darf: Zitat weiterhin zugänglich bzw. weiterhin Gruppenmitglied
+  const VISIBLE_NOTIF = `n.user_id = @me
+    AND (n.quote_id IS NULL OR EXISTS(SELECT 1 FROM quotes q WHERE q.id = n.quote_id AND ${ACCESS}))
+    AND (n.group_id IS NULL OR EXISTS(SELECT 1 FROM group_members gm WHERE gm.group_id = n.group_id AND gm.user_id = @me))`;
+
+  app.get('/api/notifications', requireAuth, (req, res) => {
+    const me = req.user.id;
+    const items = db.prepare(`
+      SELECT n.id, n.type, n.created_at AS createdAt, n.read_at IS NOT NULL AS read, a.username AS actor,
+             n.quote_id AS quoteId, q.text AS quoteText, q.person AS quotePerson, n.group_id AS groupId, g.name AS groupName
+      FROM notifications n JOIN users a ON a.id = n.actor_id
+      LEFT JOIN quotes q ON q.id = n.quote_id LEFT JOIN user_groups g ON g.id = n.group_id
+      WHERE ${VISIBLE_NOTIF}
+      ORDER BY n.created_at DESC, n.id DESC LIMIT 50`).all({ me });
+    const { unread } = db.prepare(`SELECT COUNT(*) AS unread FROM notifications n WHERE ${VISIBLE_NOTIF} AND n.read_at IS NULL`).get({ me });
+    res.json({ items: items.map((i) => ({ ...i, read: !!i.read, quoteText: i.quoteText?.slice(0, 140) })), unread });
+  });
+
+  app.post('/api/notifications/read', requireAuth, writeLimiter, (req, res) => {
+    db.prepare('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL').run(Date.now(), req.user.id);
+    res.json({ ok: true });
+  });
+
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Nicht gefunden.')));
+
+  // Öffentliche Seite für Freigabe-Links: gleiche SPA, nicht indexieren
+  app.get('/s/:token', (req, res) => {
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    res.sendFile(join(PUBLIC_DIR, 'index.html'));
+  });
 
   app.use(express.static(PUBLIC_DIR, { maxAge: '1h', index: 'index.html' }));
 

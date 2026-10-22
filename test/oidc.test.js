@@ -97,6 +97,7 @@ test('Erfolgreicher Login legt Nutzer an, startet Session, zweiter Login = gleic
   assert.equal(idpState.lastToken.code_verifier.length >= 43, true);
   const m = await me(ctx, a.session);
   assert.equal(m.user.username, 'Alice'); assert.equal(m.user.sso, true);
+  assert.equal(m.user.usernameSet, false); // SSO-Name ist nur ein Vorschlag
   const b = await sso(ctx);
   assert.equal((await me(ctx, b.session)).user.id, m.user.id);
   assert.equal(ctx.db.prepare('SELECT COUNT(*) c FROM users').get().c, 1);
