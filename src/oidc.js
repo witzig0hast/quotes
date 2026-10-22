@@ -65,13 +65,13 @@ export function createOidc({ issuer, clientId, clientSecret, publicUrl, name = '
     return meta;
   }
 
-  /** Startet einen Login: gibt die Redirect-URL und das Browser-Binding-Secret zurück. */
-  async function begin(db) {
+  /** Startet einen Login (oder mit linkUserId: eine Konto-Verknüpfung). Gibt Redirect-URL und Browser-Binding-Secret zurück. */
+  async function begin(db, { linkUserId = null } = {}) {
     const m = await getMeta();
     const state = rand(32), nonce = rand(32), verifier = rand(48), bind = rand(24);
     db.prepare('DELETE FROM oidc_flows WHERE expires_at < ?').run(Date.now());
-    db.prepare('INSERT INTO oidc_flows (state_hash, bind_hash, nonce, verifier, expires_at) VALUES (?,?,?,?,?)')
-      .run(sha256(state), sha256(bind), nonce, verifier, Date.now() + FLOW_TTL_MS);
+    db.prepare('INSERT INTO oidc_flows (state_hash, bind_hash, nonce, verifier, expires_at, link_user_id) VALUES (?,?,?,?,?,?)')
+      .run(sha256(state), sha256(bind), nonce, verifier, Date.now() + FLOW_TTL_MS, linkUserId);
     const u = new URL(m.authorization_endpoint);
     u.search = new URLSearchParams({
       response_type: 'code', client_id: clientId, redirect_uri: redirectUri, scope: scopes, state, nonce,
@@ -113,7 +113,8 @@ export function createOidc({ issuer, clientId, clientSecret, publicUrl, name = '
     } catch (e) { throw new OidcError('invalid_token', `ID-Token ungültig: ${e.message}`); }
     if (payload.nonce !== flow.nonce) throw new OidcError('invalid_token', 'Nonce stimmt nicht');
     if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 255) throw new OidcError('invalid_token', 'sub fehlt');
-    return { sub: payload.sub, preferredUsername: str(payload.preferred_username), email: str(payload.email), name: str(payload.name) };
+    return { sub: payload.sub, preferredUsername: str(payload.preferred_username), email: str(payload.email), name: str(payload.name),
+      linkUserId: flow.link_user_id ?? null };
   }
 
   return { issuer, name, allowSignup, passwordLogin, begin, complete };

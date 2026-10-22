@@ -184,7 +184,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.get('/api/me', (req, res) => {
     if (!req.session) return res.json({ user: null });
     const row = db.prepare('SELECT password_hash, username_set FROM users WHERE id = ?').get(req.user.id);
-    res.json({ user: { ...req.user, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set }, csrf: req.session.csrf });
+    const ssoLinked = !!oidc && !!db.prepare('SELECT 1 FROM identities WHERE user_id = ? AND issuer = ?').get(req.user.id, oidc.issuer);
+    res.json({ user: { ...req.user, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set, ssoLinked }, csrf: req.session.csrf });
   });
 
   // Benutzernamen ändern (bzw. beim ersten SSO-Login festlegen). Markierungen/Freigaben hängen an der ID, nicht am Namen.
@@ -224,6 +225,12 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       try {
         const q = (k) => (typeof req.query[k] === 'string' ? req.query[k] : undefined);
         const claims = await oidc.complete(db, { state: q('state'), code: q('code'), error: q('error'), bind });
+        if (claims.linkUserId) {
+          // Verknüpfung: Session bleibt, wie sie ist (Strict-Cookie kommt beim Rücksprung vom IdP ohnehin nicht mit).
+          // Abgesichert über: Start nur angemeldet + Passwort, Flow einmalig und per Bind-Cookie an diesen Browser gebunden.
+          linkIdentity(claims.linkUserId, claims.sub);
+          return res.redirect(302, '/?sso_linked=1');
+        }
         const user = findOrCreateSsoUser(claims);
         if (req.sessionToken) destroySession(db, req.sessionToken);
         const sess = createSession(db, user.id);
@@ -237,6 +244,51 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
         console.error('[oidc] callback:', e);
         fail(res, 'failed');
       }
+    });
+
+    function linkIdentity(userId, sub) {
+      tx(() => {
+        const owner = db.prepare('SELECT user_id FROM identities WHERE issuer = ? AND sub = ?').get(oidc.issuer, sub);
+        if (owner && owner.user_id !== userId) {
+          throw new OidcError('already_linked', 'Diese SSO-Identität gehört bereits zu einem anderen Konto');
+        }
+        if (owner) return; // schon mit genau diesem Konto verknüpft
+        if (db.prepare('SELECT 1 FROM identities WHERE user_id = ? AND issuer = ?').get(userId, oidc.issuer)) {
+          throw new OidcError('has_identity', 'Konto ist bereits mit einer anderen SSO-Identität verknüpft');
+        }
+        db.prepare('INSERT INTO identities (issuer, sub, user_id) VALUES (?,?,?)').run(oidc.issuer, sub, userId);
+      });
+    }
+
+    // Bestehendes (Passwort-)Konto mit SSO verknüpfen. Passwort nötig, damit eine gestohlene Session
+    // nicht dauerhaft ein fremdes SSO-Konto als Zugang hinterlegen kann.
+    app.post('/api/me/sso', requireAuth, authLimiter, async (req, res, next) => {
+      try {
+        const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+        if (db.prepare('SELECT 1 FROM identities WHERE user_id = ? AND issuer = ?').get(req.user.id, oidc.issuer)) {
+          throw new HttpError(409, `Dein Konto ist bereits mit ${oidc.name} verknüpft.`);
+        }
+        const password = typeof req.body?.password === 'string' ? req.body.password.slice(0, 200) : '';
+        if (!(await verifyPassword(password, row.password_hash))) throw new HttpError(403, 'Passwort falsch.');
+        const { url, bind } = await oidc.begin(db, { linkUserId: req.user.id });
+        res.cookie(BIND_COOKIE, bind, { ...bindOpts, maxAge: 10 * 60 * 1000 });
+        res.json({ url });
+      } catch (e) {
+        if (e instanceof OidcError) return next(new HttpError(502, `${oidc.name} ist gerade nicht erreichbar.`));
+        next(e);
+      }
+    });
+
+    // Verknüpfung lösen – nur mit Passwort und nur, wenn danach noch ein Passwort-Login möglich ist
+    app.delete('/api/me/sso', requireAuth, writeLimiter, async (req, res, next) => {
+      try {
+        const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+        if (row.password_hash === UNUSABLE_HASH) throw bad('Dein Konto hat kein Passwort – ohne SSO könntest du dich nicht mehr anmelden.');
+        const password = typeof req.body?.password === 'string' ? req.body.password.slice(0, 200) : '';
+        if (!(await verifyPassword(password, row.password_hash))) throw new HttpError(403, 'Passwort falsch.');
+        db.prepare('DELETE FROM identities WHERE user_id = ? AND issuer = ?').run(req.user.id, oidc.issuer);
+        res.json({ ok: true });
+      } catch (e) { next(e); }
     });
 
     function findOrCreateSsoUser(claims) {

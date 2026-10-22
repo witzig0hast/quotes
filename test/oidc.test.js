@@ -226,3 +226,107 @@ test('Ohne SSO-Konfiguration: keine Routen, config zeigt sso=null; ENV-Validieru
   assert.throws(() => oidcFromEnv({ OIDC_ISSUER: 'https://sso.example.com/' }), /OIDC_CLIENT_ID/);
   assert.throws(() => oidcFromEnv({ OIDC_ISSUER: 'http://sso.example.com/', OIDC_CLIENT_ID: 'a', OIDC_CLIENT_SECRET: 'b', PUBLIC_URL: 'https://q.example.com' }), /HTTPS/);
 });
+
+// ---- Bestehendes Konto mit SSO verknüpfen ----
+async function localUser(ctx, username) {
+  const r = await fetch(`${ctx.base}/api/register`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username, password: 'correct-horse-battery' }) });
+  assert.equal(r.status, 201);
+  const { csrf, user } = await r.json();
+  return { sid: r.headers.get('set-cookie').split(';')[0], csrf, id: user.id };
+}
+const call = (ctx, u, method, path, body, { csrf = true } = {}) => fetch(ctx.base + path, { method, redirect: 'manual',
+  headers: { 'content-type': 'application/json', cookie: u.sid, ...(csrf ? { 'x-csrf-token': u.csrf } : {}) }, body: JSON.stringify(body ?? {}) });
+
+/** Startet die Verknüpfung als u und spielt den IdP-Rücksprung durch. */
+async function link(ctx, u, claims, { password = 'correct-horse-battery' } = {}) {
+  reset(claims);
+  const r1 = await call(ctx, u, 'POST', '/api/me/sso', { password });
+  if (r1.status !== 200) return { status: r1.status };
+  const { url } = await r1.json();
+  const loc = new URL(url);
+  idpState.nonce = loc.searchParams.get('nonce'); idpState.challenge = loc.searchParams.get('code_challenge');
+  const bind = r1.headers.get('set-cookie').split(';')[0];
+  assert.match(bind, /^oidc_bind=/);
+  // Rücksprung vom IdP: cross-site, daher KEIN sid-Cookie (SameSite=Strict) – nur das Bind-Cookie
+  const r2 = await fetch(`${ctx.base}/api/auth/oidc/callback?code=abc&state=${loc.searchParams.get('state')}`, { redirect: 'manual', headers: { cookie: bind } });
+  return { status: 200, where: r2.headers.get('location'), setsSession: /sid=/.test(r2.headers.get('set-cookie') ?? '') };
+}
+const meOf = async (ctx, u) => (await fetch(`${ctx.base}/api/me`, { headers: { cookie: u.sid } })).json();
+
+test('Verknüpfen: bestehendes Konto + SSO -> danach landet SSO-Login im selben Konto', async () => {
+  const ctx = setup();
+  const karim = await localUser(ctx, 'karim');
+  assert.equal((await meOf(ctx, karim)).user.ssoLinked, false);
+  const r = await link(ctx, karim, { sub: 'ak-123', preferred_username: 'k.hast' });
+  assert.equal(r.where, '/?sso_linked=1');
+  assert.equal(r.setsSession, false);
+  const m = await meOf(ctx, karim);
+  assert.equal(m.user.ssoLinked, true); assert.equal(m.user.sso, false); assert.equal(m.user.username, 'karim'); // Name bleibt
+  const viaSso = await sso(ctx, { claims: { sub: 'ak-123', preferred_username: 'k.hast' } });
+  assert.equal((await me(ctx, viaSso.session)).user.id, karim.id);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) c FROM users').get().c, 1); // kein zweites Konto
+  // Passwort-Login funktioniert weiterhin
+  const pw = await fetch(`${ctx.base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'karim', password: 'correct-horse-battery' }) });
+  assert.equal(pw.status, 200);
+  // Zweites Verknüpfen -> 409
+  assert.equal((await call(ctx, karim, 'POST', '/api/me/sso', { password: 'correct-horse-battery' })).status, 409);
+  ctx.server.close();
+});
+
+test('Verknüpfen: Passwort, Login und CSRF sind Pflicht', async () => {
+  const ctx = setup();
+  const u = await localUser(ctx, 'pwcheck');
+  assert.equal((await link(ctx, u, { sub: 'x' }, { password: 'falsch-falsch' })).status, 403);
+  assert.equal((await call(ctx, u, 'POST', '/api/me/sso', { password: 'correct-horse-battery' }, { csrf: false })).status, 403);
+  assert.equal((await fetch(`${ctx.base}/api/me/sso`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) c FROM identities').get().c, 0);
+  ctx.server.close();
+});
+
+test('Verknüpfen: SSO-Identität eines anderen Kontos wird nicht übernommen', async () => {
+  const ctx = setup();
+  const other = await sso(ctx, { claims: { sub: 'victim-sub', preferred_username: 'victim' } }); // eigenes SSO-Konto existiert
+  const otherId = (await me(ctx, other.session)).user.id;
+  const u = await localUser(ctx, 'attacker');
+  const r = await link(ctx, u, { sub: 'victim-sub' });
+  assert.match(r.where, /sso_error=already_linked/);
+  assert.equal(ctx.db.prepare("SELECT user_id FROM identities WHERE sub = 'victim-sub'").get().user_id, otherId);
+  assert.equal((await meOf(ctx, u)).user.ssoLinked, false);
+  ctx.server.close();
+});
+
+test('Verknüpfung lösen: nur mit Passwort, nicht bei reinen SSO-Konten', async () => {
+  const ctx = setup();
+  const u = await localUser(ctx, 'unlinker');
+  await link(ctx, u, { sub: 'ul-1' });
+  assert.equal((await call(ctx, u, 'DELETE', '/api/me/sso', { password: 'falsch-falsch' })).status, 403);
+  assert.equal((await call(ctx, u, 'DELETE', '/api/me/sso', { password: 'correct-horse-battery' })).status, 200);
+  assert.equal((await meOf(ctx, u)).user.ssoLinked, false);
+  const again = await sso(ctx, { claims: { sub: 'ul-1', preferred_username: 'ul' } });
+  assert.notEqual((await me(ctx, again.session)).user.id, u.id); // SSO führt nicht mehr ins alte Konto
+
+  const ssoOnly = await sso(ctx, { claims: { sub: 'only-sso', preferred_username: 'onlysso' } });
+  const m = await me(ctx, ssoOnly.session);
+  assert.equal(m.user.ssoLinked, true);
+  const r = await fetch(`${ctx.base}/api/me/sso`, { method: 'DELETE', headers: { 'content-type': 'application/json', cookie: ssoOnly.session, 'x-csrf-token': m.csrf }, body: '{}' });
+  assert.equal(r.status, 400);
+  ctx.server.close();
+});
+
+test('Verknüpfungs-Flow ist an den Browser gebunden und einmalig', async () => {
+  const ctx = setup();
+  const u = await localUser(ctx, 'boundlink');
+  reset({ sub: 'bound-1' });
+  const r1 = await call(ctx, u, 'POST', '/api/me/sso', { password: 'correct-horse-battery' });
+  const loc = new URL((await r1.json()).url);
+  idpState.nonce = loc.searchParams.get('nonce'); idpState.challenge = loc.searchParams.get('code_challenge');
+  const cb = `${ctx.base}/api/auth/oidc/callback?code=abc&state=${loc.searchParams.get('state')}`;
+  // Fremder Browser (ohne Bind-Cookie), z. B. Opfer klickt präparierten Link -> abgelehnt, Flow verbraucht
+  const foreign = await fetch(cb, { redirect: 'manual', headers: { cookie: 'oidc_bind=anderes' } });
+  assert.match(foreign.headers.get('location'), /invalid_state/);
+  const own = await fetch(cb, { redirect: 'manual', headers: { cookie: r1.headers.get('set-cookie').split(';')[0] } });
+  assert.match(own.headers.get('location'), /invalid_state/); // einmalig
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) c FROM identities').get().c, 0);
+  ctx.server.close();
+});

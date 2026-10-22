@@ -113,6 +113,8 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   const hasColumn = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
   // 0 = Benutzername wurde automatisch vergeben (SSO) und noch nicht bestätigt
   if (!hasColumn('users', 'username_set')) db.exec('ALTER TABLE users ADD COLUMN username_set INTEGER NOT NULL DEFAULT 1');
+  // Gesetzt, wenn ein angemeldeter Nutzer sein bestehendes Konto mit SSO verknüpft (statt Login)
+  if (!hasColumn('oidc_flows', 'link_user_id')) db.exec('ALTER TABLE oidc_flows ADD COLUMN link_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
   if (!hasColumn('quotes', 'share_token')) db.exec('ALTER TABLE quotes ADD COLUMN share_token TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_quotes_share_token ON quotes(share_token) WHERE share_token IS NOT NULL');
   return db;

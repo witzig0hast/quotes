@@ -249,3 +249,7 @@ dialog.quote-dialog .quote { border: 0; padding-inline: 0; }
   .linkbox { flex-direction: column; }
   .linkbox .btn { min-height: 48px; }
 }
+.sso-box { border-top: 1px solid var(--line); margin-top: 18px; }
+.sso-box form .hint { margin: 0 0 8px; }
+.sso-status { margin: 0 0 14px; color: var(--muted); font-size: .9rem; line-height: 1.8; }
+.sso-status .badge { margin-right: 6px; vertical-align: 1px; }

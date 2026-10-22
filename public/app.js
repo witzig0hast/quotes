@@ -12,6 +12,8 @@ const SSO_ERRORS = {
   invalid_state: 'Die Anmeldung ist abgelaufen. Bitte erneut versuchen.',
   invalid_token: 'Die Anmeldung konnte nicht verifiziert werden.',
   provider_error: 'Der SSO-Anbieter ist gerade nicht erreichbar.',
+  already_linked: 'Dieses SSO-Konto gehört bereits zu einem anderen Quotes-Konto und kann nicht verknüpft werden.',
+  has_identity: 'Dein Konto ist bereits mit einem anderen SSO-Konto verknüpft. Löse zuerst die bestehende Verknüpfung.',
 };
 
 function h(tag, attrs = {}, ...kids) {
@@ -608,8 +610,55 @@ function openAccount() {
   const dlg = modal(
     h('div', { class: 'dialog-head' }, h('h2', {}, 'Konto'), h('button', { class: 'btn sm', onclick: () => { dlg.close(); logout(); } }, 'Abmelden')),
     nameForm,
+    ssoSection(() => dlg),
     h('details', { class: 'danger-zone' }, h('summary', {}, 'Konto löschen'), delForm),
     h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Schließen')));
+}
+
+/** Bereich „Anmeldung mit SSO“: bestehendes Konto verknüpfen bzw. Verknüpfung lösen. */
+function ssoSection(getDlg) {
+  const { sso } = state.config;
+  if (!sso) return null;
+  const box = h('section', { class: 'sso-box' });
+  const err = h('p', { class: 'error', role: 'alert' });
+  const pass = h('input', { type: 'password', id: 'acc-sso-pw', autocomplete: 'current-password', required: true, maxlength: 200 });
+  const title = h('label', { for: state.user.sso ? null : 'acc-sso-pw' }, `Anmeldung mit ${sso.name}`);
+
+  if (state.user.ssoLinked) {
+    const status = h('p', { class: 'sso-status' }, h('span', { class: 'badge public' }, 'Verknüpft'), ' ',
+      h('span', {}, `Du kannst dich mit ${sso.name} anmelden.`));
+    if (state.user.sso) { // reines SSO-Konto ohne Passwort: Lösen würde aussperren
+      box.append(title, status);
+      return box;
+    }
+    const btn = h('button', { class: 'btn danger', type: 'submit' }, 'Verknüpfung lösen');
+    box.append(title, status, h('form', {
+      onsubmit: async (e) => {
+        e.preventDefault(); err.textContent = '';
+        if (!confirm(`Verknüpfung mit ${sso.name} lösen? Du meldest dich dann nur noch mit Passwort an.`)) return;
+        btn.disabled = true;
+        try {
+          await api('DELETE', '/api/me/sso', { password: pass.value });
+          state.user = { ...state.user, ssoLinked: false };
+          getDlg().close(); toast('Verknüpfung gelöst'); openAccount();
+        } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
+      },
+    }, h('div', { class: 'hint' }, 'Zum Lösen dein Passwort bestätigen:'), h('div', { class: 'linkbox' }, pass, btn), err));
+    return box;
+  }
+
+  const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Verknüpfen');
+  box.append(title, h('form', {
+    onsubmit: async (e) => {
+      e.preventDefault(); err.textContent = ''; btn.disabled = true;
+      try {
+        const { url } = await api('POST', '/api/me/sso', { password: pass.value });
+        location.assign(url); // weiter zum SSO-Anbieter, danach zurück mit ?sso_linked=1
+      } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
+    },
+  }, h('div', { class: 'hint' }, `Verknüpfe dein bestehendes Konto mit ${sso.name}, um dich künftig auch darüber anzumelden. Deine Zitate, Gruppen und dein Name bleiben erhalten. Bitte dein Passwort bestätigen:`),
+  h('div', { class: 'linkbox' }, pass, btn), err));
+  return box;
 }
 
 async function logout() {
@@ -627,6 +676,10 @@ function render(opts) {
   if (location.pathname.startsWith('/s/')) return render();
   try { state.config = await api('GET', '/api/config'); } catch { /* Standard */ }
   const params = new URLSearchParams(location.search);
+  if (params.has('sso_linked')) {
+    history.replaceState(null, '', location.pathname);
+    setTimeout(() => toast(`Konto mit ${state.config.sso?.name ?? 'SSO'} verknüpft`), 100);
+  }
   if (params.has('sso_error')) {
     const code = params.get('sso_error');
     history.replaceState(null, '', location.pathname);
