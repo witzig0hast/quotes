@@ -149,7 +149,8 @@ dialog h2 { margin: 0 0 2px; font-family: var(--serif); font-size: 1.7rem; lette
 @media print { .nav, .fab, .toolbar, .actions { display: none; } }
 
 /* SSO */
-a.btn { text-decoration: none; }
+a.btn { text-decoration: none; color: inherit; }
+a.btn.primary { color: var(--invert-fg); }
 .btn.block.sso { margin-top: 4px; }
 .or { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; margin: 20px 0 14px; }
 .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
@@ -205,7 +206,8 @@ a.btn { text-decoration: none; }
 .row.left { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
 .row.split { justify-content: space-between; }
 .linkbox { display: flex; gap: 8px; }
-.linkbox input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+.linkbox input { flex: 1; min-width: 0; }
+.linkbox input[readonly] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
 .btn > span { display: inline-flex; }
 
 .notif-list, .group-list { display: grid; gap: 8px; margin: 14px 0 4px; }

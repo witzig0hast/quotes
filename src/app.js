@@ -159,7 +159,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
         if (String(e.message).includes('UNIQUE')) throw new HttpError(409, 'Dieser Benutzername ist bereits vergeben.');
         throw e;
       }
-      sendSession(res.status(201), { id: Number(id), username }, createSession(db, Number(id)));
+      sendSession(res.status(201), { id: Number(id), username, sso: false, usernameSet: true }, createSession(db, Number(id)));
     } catch (e) { next(e); }
   });
 
@@ -167,11 +167,11 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     try {
       const username = clean(req.body.username, 30);
       const password = typeof req.body.password === 'string' ? req.body.password.slice(0, 200) : '';
-      const row = db.prepare('SELECT id, username, password_hash FROM users WHERE username = ?').get(username);
+      const row = db.prepare('SELECT id, username, password_hash, username_set FROM users WHERE username = ?').get(username);
       const ok = await verifyPassword(password, row ? row.password_hash : DUMMY_HASH);
       if (!row || !ok) throw new HttpError(401, 'Benutzername oder Passwort falsch.');
       if (req.sessionToken) destroySession(db, req.sessionToken);
-      sendSession(res, { id: row.id, username: row.username }, createSession(db, row.id));
+      sendSession(res, { id: row.id, username: row.username, sso: false, usernameSet: !!row.username_set }, createSession(db, row.id));
     } catch (e) { next(e); }
   });
 

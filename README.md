@@ -32,9 +32,14 @@ Die App lauscht auf `127.0.0.1:3000` (Reverse-Proxy mit HTTPS davorschalten, z. 
 ## Funktionen
 
 - Registrierung/Login mit Passwort **oder SSO (OpenID Connect, z. B. authentik)**, Konto löschen
+- **Benutzername frei wählbar und jederzeit änderbar** – SSO-Nutzer übernehmen ihren SSO-Namen nicht automatisch, sondern wählen beim ersten Login selbst (der SSO-Name ist nur ein Vorschlag)
 - Zitate mit Person und Quelle anlegen, bearbeiten, löschen, durchsuchen
-- Sichtbarkeit pro Zitat: **privat**, **bestimmte Nutzer** oder **öffentlich** (alle angemeldeten Nutzer)
-- Ansichten: Entdecken, Meine, Geteilt (mit mir), Favoriten (♥)
+- **Personen markieren** (@benutzername mit Vorschlägen): Markierte sehen das Zitat – auch wenn es privat ist – und werden benachrichtigt
+- **Benachrichtigungen** (Glocke + Hinweis direkt nach dem Einloggen), wenn man markiert wird, ein Zitat mit einem geteilt wird oder man zu einer Gruppe hinzugefügt wird
+- Sichtbarkeit pro Zitat: **privat**, **geteilt** (mit Personen und/oder Gruppen) oder **öffentlich** (alle angemeldeten Nutzer)
+- **Gruppen**: anlegen, Mitglieder hinzufügen/entfernen, umbenennen, verlassen, löschen; Zitate mit ganzen Gruppen teilen; eigene Gruppenansicht
+- **Freigabe-Links**: Zitat per geheimem Link teilen, lesbar auch ohne Konto; jederzeit deaktivierbar
+- Ansichten: Entdecken, Meine, Für mich (markiert/geteilt/Gruppen), Favoriten (♥)
 - Schwarz-Weiß-Design, Hell-/Dunkelmodus automatisch, responsiv (Handy bis Desktop)
 
 ## Sicherheit
@@ -45,6 +50,10 @@ Die App lauscht auf `127.0.0.1:3000` (Reverse-Proxy mit HTTPS davorschalten, z. 
 - Strikte CSP (kein Inline-Script/-Style), Helmet-Header; UI setzt Nutzerinhalte nur per `textContent`
 - Parametrisierte SQL-Queries, serverseitige Validierung, Body-Limit, Rate-Limits für Login/Schreiben
 - Zugriffsprüfung serverseitig für jedes Zitat (Fremde erhalten 404, sehen keine Empfängerlisten)
+- Markierungen, Freigaben und Gruppen hängen an der Nutzer-ID, nicht am Namen – Umbenennen bricht nichts
+- Benachrichtigungen werden nur angezeigt, solange man das Zitat noch sehen darf bzw. noch Gruppenmitglied ist
+- Freigabe-Links: 192-Bit-Zufallstoken, nur vom Eigentümer erstell-/widerrufbar, Seite mit `noindex`; die öffentliche Ansicht zeigt nur Text, Person, Quelle und Autor (keine Markierungen, Empfänger oder Likes)
+- Gruppen: nur der Besitzer verwaltet Mitglieder; teilen nur mit Gruppen, in denen man Mitglied ist
 
 ## SSO mit authentik (oder jedem OpenID-Connect-Anbieter)
 
