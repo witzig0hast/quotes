@@ -87,6 +87,8 @@ NODE_ENV=production npm start
 | `OIDC_ALLOW_SIGNUP=false` | Nur bereits bekannte SSO-Nutzer dürfen sich anmelden, keine Neuanlage |
 | `OIDC_PASSWORD_LOGIN=false` | Passwort-Login und -Registrierung abschalten, nur SSO |
 
-Neue SSO-Nutzer erhalten ihren Benutzernamen aus `preferred_username` (bei Konflikt mit Suffix). Konten werden **ausschließlich über (Issuer, `sub`)** verknüpft – nie über E-Mail oder Namen, damit niemand ein bestehendes Konto übernehmen kann.
+**Bestehendes Konto verknüpfen:** Wer schon ein Passwort-Konto hat, kann es unter *Konto → Anmeldung mit authentik* mit SSO verknüpfen (Passwort-Bestätigung nötig). Danach führt der SSO-Login in genau dieses Konto – Name, Zitate und Gruppen bleiben erhalten, der Passwort-Login funktioniert weiterhin. Die Verknüpfung lässt sich dort auch wieder lösen (ebenfalls mit Passwort; reine SSO-Konten ohne Passwort können sich so nicht aussperren). Eine SSO-Identität, die bereits zu einem anderen Konto gehört, wird nie übernommen.
+
+Neue SSO-Nutzer bekommen ihren Benutzernamen aus `preferred_username` vorgeschlagen (bei Konflikt mit Suffix) und wählen beim ersten Login selbst. Konten werden **ausschließlich über (Issuer, `sub`)** verknüpft – nie über E-Mail oder Namen, damit niemand ein bestehendes Konto übernehmen kann.
 
 Sicherheit des SSO-Flows: PKCE (S256), `state` + `nonce`, einmalig verwendbare Login-Vorgänge (10 min), Bindung an den Browser per HttpOnly-Cookie (gegen Login-CSRF), ID-Token-Prüfung (Signatur per JWKS, Issuer, Audience, Ablauf, Nonce; nur asymmetrische Algorithmen), Issuer-Abgleich der Discovery, HTTPS-Pflicht (außer localhost).

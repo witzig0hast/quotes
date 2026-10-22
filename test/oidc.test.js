@@ -269,6 +269,7 @@ test('Verknüpfen: bestehendes Konto + SSO -> danach landet SSO-Login im selben 
   // Passwort-Login funktioniert weiterhin
   const pw = await fetch(`${ctx.base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'karim', password: 'correct-horse-battery' }) });
   assert.equal(pw.status, 200);
+  assert.equal((await pw.json()).user.ssoLinked, true); // auch die Login-Antwort kennt die Verknüpfung
   // Zweites Verknüpfen -> 409
   assert.equal((await call(ctx, karim, 'POST', '/api/me/sso', { password: 'correct-horse-battery' })).status, 409);
   ctx.server.close();

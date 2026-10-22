@@ -130,6 +130,13 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     message: { error: 'Zu viele Anfragen. Bitte kurz warten.' },
   });
 
+  /** Einheitliche Nutzerdaten für Login, Registrierung und /api/me. */
+  const userInfo = (id) => {
+    const row = db.prepare('SELECT id, username, password_hash, username_set FROM users WHERE id = ?').get(id);
+    const ssoLinked = !!oidc && !!db.prepare('SELECT 1 FROM identities WHERE user_id = ? AND issuer = ?').get(id, oidc.issuer);
+    return { id: row.id, username: row.username, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set, ssoLinked };
+  };
+
   const sendSession = (res, user, sess) => {
     res.cookie(COOKIE, sess.token, cookieOptions(secureCookies));
     res.json({ user, csrf: sess.csrf });
@@ -159,7 +166,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
         if (String(e.message).includes('UNIQUE')) throw new HttpError(409, 'Dieser Benutzername ist bereits vergeben.');
         throw e;
       }
-      sendSession(res.status(201), { id: Number(id), username, sso: false, usernameSet: true }, createSession(db, Number(id)));
+      sendSession(res.status(201), userInfo(Number(id)), createSession(db, Number(id)));
     } catch (e) { next(e); }
   });
 
@@ -167,11 +174,11 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     try {
       const username = clean(req.body.username, 30);
       const password = typeof req.body.password === 'string' ? req.body.password.slice(0, 200) : '';
-      const row = db.prepare('SELECT id, username, password_hash, username_set FROM users WHERE username = ?').get(username);
+      const row = db.prepare('SELECT id, password_hash FROM users WHERE username = ?').get(username);
       const ok = await verifyPassword(password, row ? row.password_hash : DUMMY_HASH);
       if (!row || !ok) throw new HttpError(401, 'Benutzername oder Passwort falsch.');
       if (req.sessionToken) destroySession(db, req.sessionToken);
-      sendSession(res, { id: row.id, username: row.username, sso: false, usernameSet: !!row.username_set }, createSession(db, row.id));
+      sendSession(res, userInfo(row.id), createSession(db, row.id));
     } catch (e) { next(e); }
   });
 
@@ -183,9 +190,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
 
   app.get('/api/me', (req, res) => {
     if (!req.session) return res.json({ user: null });
-    const row = db.prepare('SELECT password_hash, username_set FROM users WHERE id = ?').get(req.user.id);
-    const ssoLinked = !!oidc && !!db.prepare('SELECT 1 FROM identities WHERE user_id = ? AND issuer = ?').get(req.user.id, oidc.issuer);
-    res.json({ user: { ...req.user, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set, ssoLinked }, csrf: req.session.csrf });
+    res.json({ user: userInfo(req.user.id), csrf: req.session.csrf });
   });
 
   // Benutzernamen ändern (bzw. beim ersten SSO-Login festlegen). Markierungen/Freigaben hängen an der ID, nicht am Namen.

@@ -184,7 +184,7 @@ function renderAuth(mode = 'login') {
 // ---------- Öffentliche Ansicht (Freigabe-Link, ohne Login) ----------
 async function renderPublic(token) {
   const body = h('div', { class: 'list' });
-  $app.replaceChildren(h('main', { class: 'container' }, h('div', { class: 'public' },
+  $app.replaceChildren(h('main', { class: 'container' }, h('div', { class: 'public-page' },
     h('a', { class: 'logo auth-logo', href: '/' }, h('i', {}, '“'), 'Quotes'), body,
     h('p', { class: 'public-cta' }, h('a', { class: 'btn', href: '/' }, 'Eigene Zitate sammeln')))));
   try {

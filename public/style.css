@@ -233,7 +233,7 @@ details.new-group > summary { padding-top: 16px; }
 details.danger-zone > summary { color: var(--muted); font-weight: 600; font-size: .9rem; }
 
 .empty.small { padding: 30px 8px; }
-.public { max-width: 640px; margin: clamp(24px, 8vh, 80px) auto 0; }
+.public-page { max-width: 640px; margin: clamp(24px, 8vh, 80px) auto 0; }
 .public-cta { text-align: center; margin-top: 28px; }
 .quote-lg blockquote { font-size: clamp(1.5rem, 5vw, 2.1rem); line-height: 1.3; }
 a.logo { color: inherit; text-decoration: none; }
