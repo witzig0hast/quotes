@@ -64,7 +64,7 @@ let toastTimer;
 /** Kurze Meldung unten; optional mit Aktion (z. B. "Rückgängig"). */
 function toast(msg, { action, onAction, ms = 2600 } = {}) {
   $toast.replaceChildren(h('span', {}, msg),
-    action ? h('button', { class: 'toast-action', onclick: () => { $toast.classList.remove('show'); onAction?.(); } }, action) : null);
+    ...(action ? [h('button', { class: 'toast-action', onclick: () => { $toast.classList.remove('show'); onAction?.(); } }, action)] : []));
   $toast.classList.toggle('has-action', !!action);
   $toast.classList.add('show');
   clearTimeout(toastTimer);
@@ -120,7 +120,7 @@ function modal(...kids) {
 /** Eingabefeld für mehrere Werte mit Vorschlägen: @Benutzernamen (Standard) oder #Tags. */
 function chipInput({ initial = [], placeholder = '@benutzername', id, prefix = '@', suggest } = {}) {
   let values = [...initial];
-  const strip = (v) => v.trim().replace(prefix === '#' ? /^#+/ : /^@/, '');
+  const strip = (v) => (prefix === '#' ? v.trim().replace(/^#+/, '').toLowerCase() : v.trim().replace(/^@/, ''));
   const fetchSuggest = suggest ?? (async (q) => (await api('GET', `/api/users?q=${encodeURIComponent(q)}`)).users);
   const chips = h('div', { class: 'chips' });
   const input = h('input', { type: 'text', id, placeholder, autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', maxlength: 31 });
@@ -248,7 +248,7 @@ async function renderMain({ justLoggedIn = false } = {}) {
   const daily = h('div', { class: 'daily-slot' });
   const sentinel = h('div', { class: 'sentinel', 'aria-hidden': 'true' });
   const more = h('button', { class: 'btn more', hidden: true }, 'Mehr laden');
-  const search = h('input', { type: 'search', id: 'search', class: 'search', placeholder: 'Suchen – Text, Person, #Tag …', 'aria-label': 'Suche', value: state.q, maxlength: 100, enterkeyhint: 'search' });
+  const search = h('input', { type: 'search', id: 'search', class: 'search', placeholder: 'Suchen …', title: 'Durchsucht Text, Person, Quelle und #Tags (Taste /)', 'aria-label': 'Suche', value: state.q, maxlength: 100, enterkeyhint: 'search' });
   const sortBtn = h('button', { class: 'btn sort-btn', title: 'Sortierung', onclick: () => { state.sort = state.sort === 'top' ? 'new' : 'top'; load(true); } });
   const bellCount = h('span', { class: 'count', hidden: true });
   const bell = h('button', { class: 'icon-btn', 'aria-label': 'Benachrichtigungen', title: 'Benachrichtigungen', onclick: () => openNotifications() }, icon('bell'), bellCount);
@@ -281,6 +281,7 @@ async function renderMain({ justLoggedIn = false } = {}) {
   function syncChrome() {
     for (const b of [...seg.children, ...tabbar.querySelectorAll('[data-scope]')]) b.setAttribute('aria-current', state.scope === b.dataset.scope ? 'page' : 'false');
     sortBtn.replaceChildren(icon('sort'), h('span', {}, state.sort === 'top' ? 'Beliebteste' : 'Neueste'));
+    sortBtn.classList.toggle('on', state.sort === 'top');
     sortBtn.setAttribute('aria-label', `Sortierung: ${state.sort === 'top' ? 'Beliebteste' : 'Neueste'} (umschalten)`);
     groupBar.hidden = state.scope !== 'group';
     if (state.scope === 'group') {
@@ -437,7 +438,12 @@ function deleteWithUndo(q, card) {
   const commit = async () => {
     if (done) return;
     done = true; clearTimeout(timer); pendingDeletes.delete(q.id);
-    try { await api('DELETE', `/api/quotes/${q.id}`); card.remove(); } catch (ex) { card.hidden = false; toast(ex.message); }
+    try {
+      await api('DELETE', `/api/quotes/${q.id}`);
+      const list = card.parentElement;
+      card.remove();
+      if (list && !list.querySelector('.quote')) list.append(emptyState());
+    } catch (ex) { card.hidden = false; toast(ex.message); }
   };
   const timer = setTimeout(commit, 5000);
   pendingDeletes.set(q.id, commit);
@@ -578,9 +584,11 @@ function openImage(q) {
     try { await navigator.share({ files: [new File([blob], fileName(), { type: 'image/png' })], text: quoteAsText(q) }); } catch { /* abgebrochen */ }
   }) }, 'Teilen …');
   try { share.hidden = !navigator.canShare?.({ files: [new File([''], 'x.png', { type: 'image/png' })] }); } catch { share.hidden = true; }
-  const dlg = modal(h('h2', {}, 'Als Bild'), h('p', { class: 'hint' }, 'Perfekt für Instagram, WhatsApp-Status oder zum Ausdrucken (1080 × 1350).'),
-    img, h('div', { class: 'row left' }, download, share, toggle, h('div', { class: 'spacer' }),
-      h('button', { class: 'btn ghost', type: 'button', onclick: () => dlg.close() }, 'Schließen')));
+  const dlg = modal(
+    h('div', { class: 'dialog-head' }, h('h2', {}, 'Als Bild'),
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Schließen', onclick: () => dlg.close() }, '✕')),
+    h('p', { class: 'hint' }, 'Perfekt für Instagram, WhatsApp-Status oder zum Ausdrucken (1080 × 1350).'),
+    img, h('div', { class: 'img-actions' }, download, share, toggle));
   dlg.classList.add('image-dialog');
   draw();
 }

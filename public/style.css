@@ -409,3 +409,10 @@ dialog .dialog-head .icon-btn { font-size: 1.1rem; }
 .theme-seg button[aria-pressed="true"] { background: var(--invert-bg); color: var(--invert-fg); }
 .shortcuts { margin-top: 18px; }
 @media (hover: none) { .shortcuts { display: none; } }
+
+/* Korrekturen nach Browser-Test */
+@media (max-width: 560px) { dialog.editor { width: 100%; } }
+.sort-btn.on { background: var(--invert-bg); color: var(--invert-fg); border-color: var(--invert-bg); }
+.img-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.img-actions .btn { flex: 1 1 auto; min-height: 48px; }
+.img-actions .btn.primary { flex: 2 1 auto; }

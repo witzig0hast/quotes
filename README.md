@@ -40,6 +40,14 @@ Die App lauscht auf `127.0.0.1:3000` (Reverse-Proxy mit HTTPS davorschalten, z. 
 - **Gruppen**: anlegen, Mitglieder hinzufügen/entfernen, umbenennen, verlassen, löschen; Zitate mit ganzen Gruppen teilen; eigene Gruppenansicht
 - **Freigabe-Links**: Zitat per geheimem Link teilen, lesbar auch ohne Konto; jederzeit deaktivierbar
 - Ansichten: Entdecken, Meine, Für mich (markiert/geteilt/Gruppen), Favoriten (♥)
+- **#Tags** an Zitaten (mit Vorschlägen), Tag-Leiste mit den beliebtesten Tags; Klick auf Tag oder Person filtert
+- Sortierung **Neueste / Beliebteste**, Suche über Text, Person, Quelle und Tags
+- **Zitat des Tages** auf „Entdecken“ (aus den öffentlichen Zitaten, täglich neu)
+- **Zitat als Bild** (1080 × 1350, hell oder dunkel) herunterladen oder direkt teilen; Zitat mit einem Tipp kopieren
+- **Export** der eigenen Sammlung als CSV (Excel) oder JSON
+- Löschen mit **Rückgängig**, automatisches Nachladen beim Scrollen, Ladeplatzhalter
+- Handy: Navigationsleiste unten mit „+“ in der Mitte; Desktop: Tabs oben
+- Farbschema **System / Hell / Dunkel** umschaltbar; Tastenkürzel `N` (neues Zitat), `/` (Suche), `Strg/⌘ + Enter` (speichern)
 - Schwarz-Weiß-Design, Hell-/Dunkelmodus automatisch, responsiv (Handy bis Desktop)
 
 ## Sicherheit
