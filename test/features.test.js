@@ -5,7 +5,8 @@ import { createApp } from '../src/app.js';
 
 let server, base;
 before(() => {
-  server = createApp({ db: openDb(':memory:'), secureCookies: false }).listen(0);
+  // Viele Registrierungen in dieser Datei -> Auth-Limit anheben (Standard 20 wird in api.test.js geprüft)
+  server = createApp({ db: openDb(':memory:'), secureCookies: false, authLimit: 1000 }).listen(0);
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => server.close());
@@ -153,4 +154,74 @@ test('Nutzersuche: Präfix, ohne sich selbst, LIKE-Zeichen wörtlich', async () 
   assert.deepEqual((await a.get('/api/users?q=%40searchme')).users.sort(), ['searchmeXc', 'searchme_b'].sort());
   assert.deepEqual((await a.get('/api/users?q=%25')).users, []);
   assert.equal((await new Client().req('GET', '/api/users?q=s')).status, 401);
+});
+
+test('Tags: normalisiert, validiert, filterbar, durchsuchbar', async () => {
+  const a = await signup();
+  assert.equal((await a.req('POST', '/api/quotes', quote({ tags: ['ungültig!'] }))).status, 400);
+  assert.equal((await a.req('POST', '/api/quotes', quote({ tags: Array.from({ length: 11 }, (_, i) => `t${i}`) }))).status, 400);
+  const q = (await a.req('POST', '/api/quotes', quote({ text: 'mit Tags', tags: ['#Weisheit', 'weisheit', 'Mut', 'Über_Leben'] }))).data;
+  assert.deepEqual(q.tags, ['mut', 'weisheit', 'über_leben']);
+  await a.req('POST', '/api/quotes', quote({ text: 'ohne Tags' }));
+  assert.deepEqual(await texts(a, 'scope=mine&tag=%23WEISHEIT'), ['mit Tags']);
+  assert.deepEqual(await texts(a, 'scope=mine&q=%23über'), ['mit Tags']); // Suche findet auch Tags
+  assert.equal((await a.req('GET', '/api/quotes?scope=mine&tag=a%20b')).status, 400);
+  // Bearbeiten ersetzt Tags
+  await a.req('PUT', `/api/quotes/${q.id}`, quote({ text: 'mit Tags', tags: ['neu'] }));
+  assert.deepEqual((await a.get(`/api/quotes/${q.id}`)).tags, ['neu']);
+});
+
+test('Tag-Wolke zeigt nur Tags sichtbarer Zitate', async () => {
+  const a = await signup(), b = await signup();
+  await a.req('POST', '/api/quotes', quote({ tags: ['geheimtag'] })); // privat
+  await a.req('POST', '/api/quotes', quote({ visibility: 'public', tags: ['offen'] }));
+  await a.req('POST', '/api/quotes', quote({ visibility: 'public', tags: ['offen'] }));
+  const bTags = (await b.get('/api/tags')).tags;
+  assert.ok(bTags.some((t) => t.tag === 'offen' && t.count >= 2));
+  assert.ok(!bTags.some((t) => t.tag === 'geheimtag'));
+  assert.ok((await a.get('/api/tags?scope=mine')).tags.some((t) => t.tag === 'geheimtag'));
+});
+
+test('Filter nach Person (exakt, ohne Groß/Klein) und Sortierung nach Beliebtheit', async () => {
+  const a = await signup(), b = await signup(), c = await signup();
+  const q1 = (await a.req('POST', '/api/quotes', quote({ text: 'eins', person: 'Hannah Arendt', visibility: 'public' }))).data;
+  const q2 = (await a.req('POST', '/api/quotes', quote({ text: 'zwei', person: 'Hannah Arendt Fan', visibility: 'public' }))).data;
+  assert.deepEqual(await texts(a, 'scope=mine&person=hannah%20arendt'), ['eins']);
+  await b.req('POST', `/api/quotes/${q1.id}/like`); await c.req('POST', `/api/quotes/${q1.id}/like`); await b.req('POST', `/api/quotes/${q2.id}/like`);
+  assert.deepEqual((await texts(a, 'scope=mine&sort=top')).slice(0, 2), ['eins', 'zwei']);
+  assert.deepEqual((await texts(a, 'scope=mine')).slice(0, 2), ['zwei', 'eins']);
+});
+
+test('Zitat des Tages: nur öffentliche Zitate, für alle gleich', async () => {
+  const a = await signup(), b = await signup();
+  const da = (await a.get('/api/daily')).quote, db2 = (await b.get('/api/daily')).quote;
+  assert.ok(da); assert.equal(da.id, db2.id);
+  // Eigentümer-Felder nur für den Eigentümer
+  const viewer = da.mine ? db2 : da;
+  assert.equal(viewer.visibility === undefined || viewer.mine, true);
+  // Private Zitate tauchen nie auf (nur öffentliche Kandidaten)
+  const full = await a.get(`/api/quotes/${da.id}`);
+  assert.equal(full.mine ? full.visibility : 'public', 'public');
+  assert.equal((await new Client().req('GET', '/api/daily')).status, 401);
+});
+
+test('Export: nur eigene Zitate, JSON und CSV (mit Formel-Schutz)', async () => {
+  const a = await signup(), b = await signup();
+  await a.req('POST', '/api/quotes', quote({ text: '=HYPERLINK("http://x")', person: 'Mal "Lory"', tags: ['csv'], mentions: [b.name] }));
+  await b.req('POST', '/api/quotes', quote({ text: 'fremd' }));
+  const j = await fetch(`${base}/api/export?format=json`, { headers: { cookie: a.cookie } });
+  assert.match(j.headers.get('content-disposition'), /attachment; filename="quotes-\d{4}-\d{2}-\d{2}\.json"/);
+  const data = await j.json();
+  assert.deepEqual(data.quotes.map((q) => q.text), ['=HYPERLINK("http://x")']);
+  assert.deepEqual(data.quotes[0].mentions, [b.name]);
+  const c = await fetch(`${base}/api/export?format=csv`, { headers: { cookie: a.cookie } });
+  assert.match(c.headers.get('content-type'), /text\/csv/);
+  const bytes = Buffer.from(await c.arrayBuffer());
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]); // UTF-8-BOM, damit Excel Umlaute richtig erkennt
+  const csv = bytes.subarray(3).toString('utf8');
+  assert.ok(csv.startsWith('text,person'));
+  assert.ok(csv.includes(`"'=HYPERLINK(""http://x"")"`)); // Formel entschärft, Anführungszeichen verdoppelt
+  assert.ok(csv.includes('"Mal ""Lory"""'));
+  assert.ok(!csv.includes('fremd'));
+  assert.equal((await fetch(`${base}/api/export`)).status, 401);
 });

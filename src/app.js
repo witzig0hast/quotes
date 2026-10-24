@@ -3,7 +3,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import {
   hashPassword, verifyPassword, DUMMY_HASH, createSession, getSession,
   destroySession, cookieOptions, safeEqual, COOKIE,
@@ -23,6 +23,14 @@ const clean = (v, max) => (typeof v === 'string' ? v.replace(/\r\n/g, '\n').trim
 
 const USERNAME_RE = /^[A-Za-z0-9_.-]{3,30}$/;
 const MAX_MENTIONS = 20;
+const MAX_TAGS = 10;
+const TAG_RE = /^[\p{L}\p{N}_-]{1,30}$/u;
+/** "#Weisheit" -> "weisheit"; wirft bei ungültigen Zeichen. */
+const normTag = (t) => {
+  const tag = String(t).trim().replace(/^#+/, '').toLowerCase();
+  if (!TAG_RE.test(tag)) throw bad(`Ungültiger Tag „${String(t).slice(0, 30)}“: 1–30 Zeichen, nur Buchstaben, Zahlen, _ und -.`);
+  return tag;
+};
 
 const usernameList = (v, what) => {
   if (v === undefined) return [];
@@ -50,7 +58,10 @@ function validateQuote(body) {
     shareGroups = [...new Set((body.shareGroups ?? []).map(Number))];
     if (shareGroups.length > 20 || shareGroups.some((g) => !Number.isSafeInteger(g) || g < 1)) throw bad('Ungültige Gruppenliste.');
   }
-  return { text, person, source, visibility, shareWith, shareGroups, mentions };
+  if (body.tags !== undefined && !Array.isArray(body.tags)) throw bad('Ungültige Tag-Liste.');
+  const tags = [...new Set((body.tags ?? []).filter((t) => String(t).trim()).map(normTag))];
+  if (tags.length > MAX_TAGS) throw bad(`Höchstens ${MAX_TAGS} Tags pro Zitat.`);
+  return { text, person, source, visibility, shareWith, shareGroups, mentions, tags };
 }
 
 const BIND_COOKIE = 'oidc_bind';
@@ -68,7 +79,7 @@ function usernameBase(claims) {
   return u.length >= 3 ? u : `user_${u}`.slice(0, 26);
 }
 
-export function createApp({ db, oidc = null, secureCookies = process.env.NODE_ENV === 'production' } = {}) {
+export function createApp({ db, oidc = null, secureCookies = process.env.NODE_ENV === 'production', authLimit = 20 } = {}) {
   const passwordLogin = !oidc || oidc.passwordLogin;
   const app = express();
   app.disable('x-powered-by');
@@ -118,7 +129,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
 
   const requireAuth = (req, res, next) => (req.user ? next() : next(new HttpError(401, 'Bitte anmelden.')));
   const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false,
+    windowMs: 15 * 60 * 1000, limit: authLimit, standardHeaders: 'draft-7', legacyHeaders: false,
     message: { error: 'Zu viele Versuche. Bitte später erneut versuchen.' },
   });
   const writeLimiter = rateLimit({
@@ -370,6 +381,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     const own = rows.filter((r) => r.mine).map((r) => r.id);
     const mentions = groupBy(db.prepare(`SELECT m.quote_id, u.username FROM quote_mentions m JOIN users u ON u.id = m.user_id
       WHERE m.quote_id IN (${placeholders(ids)}) ORDER BY u.username`).all(...ids), 'quote_id', (r) => r.username);
+    const tags = groupBy(db.prepare(`SELECT quote_id, tag FROM quote_tags WHERE quote_id IN (${placeholders(ids)}) ORDER BY tag`)
+      .all(...ids), 'quote_id', (r) => r.tag);
     const shares = own.length ? groupBy(db.prepare(`SELECT s.quote_id, u.username FROM quote_shares s JOIN users u ON u.id = s.user_id
       WHERE s.quote_id IN (${placeholders(own)}) ORDER BY u.username`).all(...own), 'quote_id', (r) => r.username) : new Map();
     const groups = own.length ? groupBy(db.prepare(`SELECT qg.quote_id, g.id, g.name FROM quote_groups qg JOIN user_groups g ON g.id = qg.group_id
@@ -377,6 +390,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     return rows.map((r) => ({
       id: r.id, text: r.text, person: r.person, source: r.source, createdAt: r.createdAt, author: r.author,
       mine: !!r.mine, likes: r.likes, liked: !!r.liked, mentions: mentions.get(r.id) ?? [],
+      tags: tags.get(r.id) ?? [],
       // Nur für den Eigentümer: Sichtbarkeit, Empfänger, Gruppen, Freigabe-Link
       ...(r.mine ? {
         visibility: r.visibility,
@@ -430,10 +444,14 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
         where.push(`q.visibility = 'shared' AND EXISTS(SELECT 1 FROM quote_groups qg WHERE qg.quote_id = q.id AND qg.group_id = @gid)`);
       } else where.push(`q.visibility = 'public'`);
       if (q) {
-        where.push(`(q.text LIKE @q ESCAPE '\\' OR q.person LIKE @q ESCAPE '\\' OR q.source LIKE @q ESCAPE '\\')`);
-        params.q = `%${escapeLike(q)}%`;
+        where.push(`(q.text LIKE @q ESCAPE '\\' OR q.person LIKE @q ESCAPE '\\' OR q.source LIKE @q ESCAPE '\\'
+                     OR EXISTS(SELECT 1 FROM quote_tags t WHERE t.quote_id = q.id AND t.tag LIKE @q ESCAPE '\\'))`);
+        params.q = `%${escapeLike(q.toLowerCase().startsWith('#') ? q.slice(1) : q)}%`;
       }
-      const rows = db.prepare(`${BASE} WHERE ${where.join(' AND ')} ORDER BY q.created_at DESC, q.id DESC LIMIT @limit OFFSET @offset`).all(params);
+      if (req.query.tag) { params.tag = normTag(clean(String(req.query.tag), 31)); where.push('EXISTS(SELECT 1 FROM quote_tags t WHERE t.quote_id = q.id AND t.tag = @tag)'); }
+      if (req.query.person) { params.person = clean(String(req.query.person), 100); where.push('q.person = @person COLLATE NOCASE'); }
+      const order = req.query.sort === 'top' ? 'likes DESC, q.created_at DESC, q.id DESC' : 'q.created_at DESC, q.id DESC';
+      const rows = db.prepare(`${BASE} WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT @limit OFFSET @offset`).all(params);
       res.json({ quotes: shape(rows.slice(0, PAGE_SIZE)), hasMore: rows.length > PAGE_SIZE });
     } catch (e) { next(e); }
   });
@@ -480,6 +498,9 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     for (const id of mentioned) insM.run(quoteId, id);
     for (const id of shared) insS.run(quoteId, id);
     for (const id of groups) insG.run(quoteId, id);
+    db.prepare('DELETE FROM quote_tags WHERE quote_id = ?').run(quoteId);
+    const insT = db.prepare('INSERT INTO quote_tags (quote_id, tag) VALUES (?,?)');
+    for (const t of v.tags) insT.run(quoteId, t);
 
     const newMentions = mentioned.filter((id) => !prevMentions.has(id));
     notify(newMentions, 'mention', ownerId, { quoteId });
@@ -559,6 +580,45 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       db.prepare('UPDATE quotes SET share_token = NULL WHERE id = ?').run(id);
       res.json({ link: null });
     } catch (e) { next(e); }
+  });
+
+  // Beliebte Tags unter allen Zitaten, die ich sehen darf (bzw. nur meinen)
+  app.get('/api/tags', requireAuth, (req, res) => {
+    const filter = req.query.scope === 'mine' ? 'q.user_id = @me' : ACCESS;
+    const rows = db.prepare(`SELECT t.tag, COUNT(*) AS count FROM quote_tags t JOIN quotes q ON q.id = t.quote_id
+                             WHERE ${filter} GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT 20`).all({ me: req.user.id });
+    res.json({ tags: rows });
+  });
+
+  // Zitat des Tages: für alle gleich, aus den öffentlichen Zitaten, wechselt täglich (UTC)
+  app.get('/api/daily', requireAuth, (req, res) => {
+    const { n } = db.prepare("SELECT COUNT(*) AS n FROM quotes WHERE visibility = 'public'").get();
+    if (!n) return res.json({ quote: null });
+    const day = new Date().toISOString().slice(0, 10);
+    const offset = parseInt(createHash('sha256').update(day).digest('hex').slice(0, 8), 16) % n;
+    const { id } = db.prepare("SELECT id FROM quotes WHERE visibility = 'public' ORDER BY id LIMIT 1 OFFSET ?").get(offset);
+    res.json({ quote: getOne(id, req.user.id) });
+  });
+
+  // Export der eigenen Sammlung (JSON oder CSV)
+  app.get('/api/export', requireAuth, readLimiter, (req, res) => {
+    const format = req.query.format === 'csv' ? 'csv' : 'json';
+    const rows = shape(db.prepare(`${BASE} WHERE q.user_id = @me ORDER BY q.created_at, q.id`).all({ me: req.user.id }));
+    const data = rows.map((q) => ({ text: q.text, person: q.person, source: q.source, tags: q.tags, visibility: q.visibility,
+      mentions: q.mentions, sharedWith: q.shareWith, groups: q.shareGroups.map((g) => g.name), likes: q.likes,
+      createdAt: new Date(q.createdAt).toISOString() }));
+    const date = new Date().toISOString().slice(0, 10);
+    res.set('Content-Disposition', `attachment; filename="quotes-${date}.${format}"`);
+    if (format === 'json') return res.type('application/json').send(JSON.stringify({ exportedAt: new Date().toISOString(), quotes: data }, null, 2));
+    // CSV (Excel-tauglich: BOM, Semikolon-sicher durch Quoting, Schutz vor Formel-Injection)
+    const cell = (v) => {
+      let s = Array.isArray(v) ? v.join(', ') : String(v ?? '');
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const cols = ['text', 'person', 'source', 'tags', 'visibility', 'mentions', 'sharedWith', 'groups', 'likes', 'createdAt'];
+    const csv = [cols.join(','), ...data.map((d) => cols.map((c) => cell(d[c])).join(','))].join('\r\n');
+    res.type('text/csv; charset=utf-8').send(`\uFEFF${csv}\r\n`);
   });
 
   // Öffentlich, ohne Login: nur Inhalt + Autor, keine Markierungen/Empfänger/Likes

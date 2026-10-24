@@ -96,6 +96,14 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     );
     CREATE INDEX IF NOT EXISTS idx_quote_groups_group ON quote_groups(group_id);
 
+    -- Schlagwörter (#tags), normalisiert: klein, ohne #
+    CREATE TABLE IF NOT EXISTS quote_tags (
+      quote_id INTEGER NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+      tag      TEXT NOT NULL,
+      PRIMARY KEY (quote_id, tag)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tags_tag ON quote_tags(tag);
+
     CREATE TABLE IF NOT EXISTS notifications (
       id         INTEGER PRIMARY KEY,
       user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -121,3 +121,14 @@ test('Konto löschen entfernt Zitate', async () => {
   assert.equal((await c.req('DELETE', '/api/me', { password: 'correct-horse-battery' })).status, 200);
   assert.ok(!(await other.req('GET', '/api/quotes?scope=feed')).data.quotes.some((q) => q.text === 'bye'));
 });
+
+test('Rate-Limit: nach 20 Login-Versuchen pro 15 Minuten ist Schluss', async () => {
+  const s = createApp({ db: openDb(':memory:'), secureCookies: false }).listen(0);
+  const url = `http://127.0.0.1:${s.address().port}/api/login`;
+  const codes = [];
+  for (let i = 0; i < 21; i++) {
+    codes.push((await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'x', password: 'y' }) })).status);
+  }
+  s.close();
+  assert.deepEqual([codes[0], codes[19], codes[20]], [401, 401, 429]);
+});
