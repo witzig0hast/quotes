@@ -25,3 +25,7 @@ export const intParam = (v) => {
 export const handler = (fn) => (req, res, next) => {
   try { const r = fn(req, res, next); if (r?.catch) r.catch(next); } catch (e) { next(e); }
 };
+
+/** Für Duplikat-Erkennung und tolerante Suche: klein, ohne Akzente/Umlaut-Punkte, ß->ss, nur Buchstaben/Ziffern. */
+export const normText = (s) => String(s ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
+  .replace(/ß/g, 'ss').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();

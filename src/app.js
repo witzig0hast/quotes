@@ -10,7 +10,7 @@ import {
 } from './auth.js';
 import { OidcError } from './oidc.js';
 import { createAssets, NO_STORE } from './assets.js';
-import { HttpError, bad, clean, escapeLike, placeholders, groupBy } from './util.js';
+import { HttpError, bad, clean, escapeLike, placeholders, groupBy, normText } from './util.js';
 import { registerFeatures } from './features/index.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -90,7 +90,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:'],
+        imgSrc: ["'self'", 'data:', 'https://upload.wikimedia.org'], // Wikipedia-Vorschaubilder auf Personen-Seiten
         connectSrc: ["'self'"],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
@@ -103,7 +103,9 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     strictTransportSecurity: secureCookies,
   }));
 
-  app.use(express.json({ limit: '20kb' }));
+  // JSON-Body max. 20 KB – nur der Import (eigener Parser, 2 MB) ist ausgenommen
+  const json20kb = express.json({ limit: '20kb' });
+  app.use((req, res, next) => (req.path === '/api/import' ? next() : json20kb(req, res, next)));
   // API nie cachen (auch nicht in nginx/Cloudflare); Version mitsenden, damit offene Tabs Updates bemerken
   app.use('/api', (req, res, next) => { res.set({ ...NO_STORE, 'X-App-Version': assets.version() }); next(); });
 
@@ -503,16 +505,18 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.post('/api/quotes', requireAuth, writeLimiter, (req, res, next) => {
     try {
       const v = validateQuote(req.body);
-      const id = tx(() => {
-        const now = Date.now();
-        const id = Number(db.prepare('INSERT INTO quotes (user_id,text,person,source,visibility,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
-          .run(req.user.id, v.text, v.person, v.source, v.visibility, now, now).lastInsertRowid);
-        saveRelations(id, req.user.id, v);
-        return id;
-      });
+      const id = tx(() => insertQuote(req.user.id, v));
       res.status(201).json(getOne(id, req.user.id));
     } catch (e) { next(e); }
   });
+
+  /** Legt ein validiertes Zitat an (innerhalb einer Transaktion aufrufen). */
+  function insertQuote(userId, v, createdAt = Date.now()) {
+    const id = Number(db.prepare('INSERT INTO quotes (user_id,text,text_norm,person,source,visibility,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(userId, v.text, normText(v.text), v.person, v.source, v.visibility, createdAt, Date.now()).lastInsertRowid);
+    saveRelations(id, userId, v);
+    return id;
+  }
 
   const requireOwnQuote = (req) => {
     const id = idParam(req);
@@ -526,8 +530,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       const id = requireOwnQuote(req);
       const v = validateQuote(req.body);
       tx(() => {
-        db.prepare('UPDATE quotes SET text=?, person=?, source=?, visibility=?, updated_at=? WHERE id=?')
-          .run(v.text, v.person, v.source, v.visibility, Date.now(), id);
+        db.prepare('UPDATE quotes SET text=?, text_norm=?, person=?, source=?, visibility=?, updated_at=? WHERE id=?')
+          .run(v.text, normText(v.text), v.person, v.source, v.visibility, Date.now(), id);
         saveRelations(id, req.user.id, v);
       });
       res.json(getOne(id, req.user.id));
@@ -754,13 +758,13 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     db, oidc, secureCookies, assets, PAGE_SIZE, UNUSABLE_HASH,
     tx, requireAuth, authLimiter, writeLimiter, readLimiter,
     ACCESS, FOR_ME, BASE, shape, getOne, idParam, memberRole, notify, userInfo,
-    resolveUsers, resolveGroups, saveRelations, validateQuote, usernameList, normTag,
+    resolveUsers, resolveGroups, saveRelations, validateQuote, usernameList, normTag, insertQuote, requireOwnQuote,
   });
 
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Nicht gefunden.')));
 
   // Öffentliche Seite für Freigabe-Links: gleiche SPA, nicht indexieren
-  app.get('/s/:token', (req, res) => assets.sendHtml(res, { 'X-Robots-Tag': 'noindex, nofollow' }));
+  app.get(['/s/:token', '/c/:token'], (req, res) => assets.sendHtml(res, { 'X-Robots-Tag': 'noindex, nofollow' }));
   app.get(['/', '/index.html'], (req, res) => assets.sendHtml(res));
   app.get('/assets/:version/:file', (req, res, next) => assets.sendAsset(req, res, next));
 

@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { normText } from './util.js';
 
 export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
@@ -104,6 +105,37 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     );
     CREATE INDEX IF NOT EXISTS idx_tags_tag ON quote_tags(tag);
 
+    -- Sammlungen (Ordner) für Zitate; sichtbar für Eigentümer, freigegebene Gruppen und per geheimem Link
+    CREATE TABLE IF NOT EXISTS collections (
+      id          INTEGER PRIMARY KEY,
+      owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name        TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      share_token TEXT UNIQUE,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_collections_owner ON collections(owner_id);
+    CREATE TABLE IF NOT EXISTS collection_quotes (
+      collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      quote_id      INTEGER NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+      added_at      INTEGER NOT NULL,
+      PRIMARY KEY (collection_id, quote_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cq_quote ON collection_quotes(quote_id);
+    CREATE TABLE IF NOT EXISTS collection_groups (
+      collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      group_id      INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+      PRIMARY KEY (collection_id, group_id)
+    );
+
+    -- Zwischenspeicher für Wikipedia-Kurzbeschreibungen (Personen-Seiten)
+    CREATE TABLE IF NOT EXISTS wiki_cache (
+      name       TEXT PRIMARY KEY,
+      data       TEXT,
+      fetched_at INTEGER NOT NULL
+    );
+
     -- type wird in der App geprüft (mention, share, group_add, comment, follow, suggestion, …);
     -- ref_id verweist je nach Typ z. B. auf einen Kommentar oder Vorschlag.
     CREATE TABLE IF NOT EXISTS notifications (
@@ -150,6 +182,12 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   if (!hasColumn('users', 'username_set')) db.exec('ALTER TABLE users ADD COLUMN username_set INTEGER NOT NULL DEFAULT 1');
   // Gesetzt, wenn ein angemeldeter Nutzer sein bestehendes Konto mit SSO verknüpft (statt Login)
   if (!hasColumn('oidc_flows', 'link_user_id')) db.exec('ALTER TABLE oidc_flows ADD COLUMN link_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
+  if (!hasColumn('quotes', 'text_norm')) {
+    db.exec("ALTER TABLE quotes ADD COLUMN text_norm TEXT NOT NULL DEFAULT ''");
+    const upd = db.prepare('UPDATE quotes SET text_norm = ? WHERE id = ?');
+    for (const r of db.prepare('SELECT id, text FROM quotes').all()) upd.run(normText(r.text), r.id);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_quotes_norm ON quotes(text_norm)');
   if (!hasColumn('quotes', 'share_token')) db.exec('ALTER TABLE quotes ADD COLUMN share_token TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_quotes_share_token ON quotes(share_token) WHERE share_token IS NOT NULL');
   return db;
