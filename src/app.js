@@ -9,6 +9,7 @@ import {
   destroySession, cookieOptions, safeEqual, COOKIE,
 } from './auth.js';
 import { OidcError } from './oidc.js';
+import { createAssets, NO_STORE } from './assets.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const PAGE_SIZE = 20;
@@ -79,7 +80,9 @@ function usernameBase(claims) {
   return u.length >= 3 ? u : `user_${u}`.slice(0, 26);
 }
 
-export function createApp({ db, oidc = null, secureCookies = process.env.NODE_ENV === 'production', authLimit = 20 } = {}) {
+export function createApp({ db, oidc = null, secureCookies = process.env.NODE_ENV === 'production', authLimit = 20,
+  publicDir = PUBLIC_DIR, cacheAssets } = {}) {
+  const assets = createAssets(publicDir, cacheAssets === undefined ? {} : { cache: cacheAssets });
   const passwordLogin = !oidc || oidc.passwordLogin;
   const app = express();
   app.disable('x-powered-by');
@@ -105,7 +108,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   }));
 
   app.use(express.json({ limit: '20kb' }));
-  app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+  // API nie cachen (auch nicht in nginx/Cloudflare); Version mitsenden, damit offene Tabs Updates bemerken
+  app.use('/api', (req, res, next) => { res.set({ ...NO_STORE, 'X-App-Version': assets.version() }); next(); });
 
   // --- Session laden + CSRF-Schutz ---
   app.use('/api', (req, res, next) => {
@@ -760,12 +764,12 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Nicht gefunden.')));
 
   // Öffentliche Seite für Freigabe-Links: gleiche SPA, nicht indexieren
-  app.get('/s/:token', (req, res) => {
-    res.set('X-Robots-Tag', 'noindex, nofollow');
-    res.sendFile(join(PUBLIC_DIR, 'index.html'));
-  });
+  app.get('/s/:token', (req, res) => assets.sendHtml(res, { 'X-Robots-Tag': 'noindex, nofollow' }));
+  app.get(['/', '/index.html'], (req, res) => assets.sendHtml(res));
+  app.get('/assets/:version/:file', (req, res, next) => assets.sendAsset(req, res, next));
 
-  app.use(express.static(PUBLIC_DIR, { maxAge: '1h', index: 'index.html' }));
+  // Unversionierte Dateien (z. B. /app.js von einer alten, noch gecachten Seite): nie cachen
+  app.use(express.static(publicDir, { index: false, etag: true, setHeaders: (res) => res.set(NO_STORE) }));
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {

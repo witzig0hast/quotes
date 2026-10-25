@@ -81,6 +81,18 @@ function getTheme() { try { return localStorage.getItem(THEME_KEY) || 'system'; 
 function setTheme(t) { try { localStorage.setItem(THEME_KEY, t); } catch { /* privat-Modus */ } applyTheme(t); }
 applyTheme(getTheme());
 
+// Eigene Version (vom Server ins HTML geschrieben). Meldet der Server eine andere, gibt es ein Update.
+const APP_VERSION = document.querySelector('meta[name="app-version"]')?.content ?? null;
+let updateShown = false;
+function checkVersion(res) {
+  const server = res.headers.get('X-App-Version');
+  if (!APP_VERSION || !server || server === APP_VERSION || updateShown) return;
+  updateShown = true;
+  document.body.append(h('div', { class: 'update-bar', role: 'status' },
+    h('span', {}, 'Neue Version verfügbar'),
+    h('button', { class: 'btn sm primary', onclick: () => location.reload() }, 'Neu laden')));
+}
+
 async function api(method, url, body) {
   const write = method !== 'GET';
   const res = await fetch(url, {
@@ -89,7 +101,9 @@ async function api(method, url, body) {
     headers: { ...(write ? { 'Content-Type': 'application/json' } : {}), ...(state.csrf ? { 'X-CSRF-Token': state.csrf } : {}) },
     body: write ? JSON.stringify(body ?? {}) : undefined,
     credentials: 'same-origin',
+    cache: 'no-store',
   });
+  checkVersion(res);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && state.user) { setUser(null); render(); }

@@ -29,6 +29,19 @@ docker compose up -d --build
 
 Die App lauscht auf `127.0.0.1:3000` (Reverse-Proxy mit HTTPS davorschalten, z. B. Traefik/Caddy/nginx im selben Netzwerk wie authentik). Daten liegen im Volume `quotes-data` (`/data/quotes.db`). Der Container läuft als Nicht-Root, mit read-only-Dateisystem und ohne Linux-Capabilities.
 
+## Caching (nginx, Cloudflare)
+
+Die App sorgt selbst dafür, dass nach einem Deploy immer die neue Version geladen wird:
+
+- **HTML** (`/`, `/s/…`) wird mit `Cache-Control: no-store` sowie `CDN-Cache-Control`, `Cloudflare-CDN-Cache-Control: no-store` und `X-Accel-Expires: 0` (nginx) ausgeliefert – kein Browser, Proxy oder CDN speichert es.
+- **CSS/JS** liegen unter `/assets/<inhalts-hash>/app.js` bzw. `…/style.css`. Ändert sich eine Datei, ändert sich die URL; diese URLs sind daher `immutable` und dürfen beliebig lange gecacht werden – eine alte Version kann nicht mehr ausgeliefert werden.
+- **API** wird nie gecacht. Jede Antwort enthält `X-App-Version`; offene Tabs zeigen nach einem Deploy „Neue Version verfügbar – Neu laden“.
+- Die Version wird beim Start berechnet (Deploy = Neustart des Containers); in der Entwicklung bei jeder Anfrage.
+
+Hinweise:
+- **Cloudflare:** Keine Page-/Cache-Rule „Cache Everything“ für HTML bzw. `/api/*` setzen (falls vorhanden: für diese Pfade „Bypass“). Nach dem ersten Deploy dieser Version einmal *Caching → Purge Everything*, damit alte, noch bis zu 1 Stunde gültige Kopien von `/`, `/app.js` und `/style.css` verschwinden.
+- **nginx:** Wenn `proxy_cache` aktiv ist, respektiert nginx `X-Accel-Expires: 0`. Header der App nicht mit `proxy_ignore_headers` oder eigenem `expires`/`add_header Cache-Control` überschreiben.
+
 ## Funktionen
 
 - Registrierung/Login mit Passwort **oder SSO (OpenID Connect, z. B. authentik)**, Konto löschen
