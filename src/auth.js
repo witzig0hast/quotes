@@ -37,7 +37,7 @@ export function getSession(db, token) {
   const row = db.prepare(`
     SELECT s.csrf, s.expires_at, u.id, u.username
     FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ?`).get(sha256(token));
+    WHERE s.token_hash = ? AND u.disabled = 0`).get(sha256(token)); // gesperrte Konten: Sitzung sofort ungültig
   if (!row) return null;
   if (row.expires_at < Date.now()) {
     destroySession(db, token);

@@ -85,7 +85,7 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     CREATE TABLE IF NOT EXISTS group_members (
       group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
       user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      role     TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner','member')),
+      role     TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner','admin','member')),
       added_at INTEGER NOT NULL,
       PRIMARY KEY (group_id, user_id)
     );
@@ -148,6 +148,49 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     );
     CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id);
 
+    -- Einladungslinks für Gruppen (Token nur als Hash gespeichert)
+    CREATE TABLE IF NOT EXISTS group_invites (
+      id         INTEGER PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      group_id   INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+      created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL,
+      max_uses   INTEGER,
+      uses       INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
+    -- Verbesserungsvorschläge zu fremden Zitaten (Text, Person, Quelle)
+    CREATE TABLE IF NOT EXISTS suggestions (
+      id         INTEGER PRIMARY KEY,
+      quote_id   INTEGER NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      field      TEXT NOT NULL CHECK (field IN ('text','person','source')),
+      value      TEXT NOT NULL,
+      note       TEXT NOT NULL DEFAULT '',
+      status     TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','rejected')),
+      created_at INTEGER NOT NULL,
+      decided_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_suggestions_quote ON suggestions(quote_id, status);
+
+    -- Meldungen (Zitate oder Kommentare) mit Momentaufnahme des Inhalts für die Prüfung
+    CREATE TABLE IF NOT EXISTS reports (
+      id          INTEGER PRIMARY KEY,
+      reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      quote_id    INTEGER REFERENCES quotes(id) ON DELETE SET NULL,
+      comment_id  INTEGER REFERENCES comments(id) ON DELETE SET NULL,
+      target_user INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reason      TEXT NOT NULL,
+      note        TEXT NOT NULL DEFAULT '',
+      snapshot    TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','dismissed')),
+      created_at  INTEGER NOT NULL,
+      resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      resolved_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at);
+
     -- Zwischenspeicher für Wikipedia-Kurzbeschreibungen (Personen-Seiten)
     CREATE TABLE IF NOT EXISTS wiki_cache (
       name       TEXT PRIMARY KEY,
@@ -201,6 +244,29 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   if (!hasColumn('users', 'username_set')) db.exec('ALTER TABLE users ADD COLUMN username_set INTEGER NOT NULL DEFAULT 1');
   // Gesetzt, wenn ein angemeldeter Nutzer sein bestehendes Konto mit SSO verknüpft (statt Login)
   if (!hasColumn('oidc_flows', 'link_user_id')) db.exec('ALTER TABLE oidc_flows ADD COLUMN link_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
+  if (!hasColumn('users', 'is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+  if (!hasColumn('users', 'disabled')) db.exec('ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0');
+  // Gruppen-Rollen: alte Tabelle erlaubte nur owner/member -> um "admin" erweitern (verlustfrei)
+  const gmSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'group_members'").get()?.sql ?? '';
+  if (/role IN \('owner','member'\)/.test(gmSql)) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE group_members_new (
+        group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+        user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role     TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner','admin','member')),
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (group_id, user_id)
+      );
+      INSERT INTO group_members_new SELECT group_id, user_id, role, added_at FROM group_members;
+      DROP TABLE group_members;
+      ALTER TABLE group_members_new RENAME TO group_members;
+      CREATE INDEX IF NOT EXISTS idx_members_user ON group_members(user_id);
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
   if (!hasColumn('quotes', 'text_norm')) {
     db.exec("ALTER TABLE quotes ADD COLUMN text_norm TEXT NOT NULL DEFAULT ''");
     const upd = db.prepare('UPDATE quotes SET text_norm = ? WHERE id = ?');

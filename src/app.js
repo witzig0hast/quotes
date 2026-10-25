@@ -143,11 +143,14 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     message: { error: 'Zu viele Anfragen. Bitte kurz warten.' },
   });
 
+  const featureCtx = {}; // gemeinsamer Kontext für src/features/ (wird unten befüllt)
+
   /** Einheitliche Nutzerdaten für Login, Registrierung und /api/me. */
   const userInfo = (id) => {
     const row = db.prepare('SELECT id, username, password_hash, username_set FROM users WHERE id = ?').get(id);
     const ssoLinked = !!oidc && !!db.prepare('SELECT 1 FROM identities WHERE user_id = ? AND issuer = ?').get(id, oidc.issuer);
-    return { id: row.id, username: row.username, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set, ssoLinked };
+    return { id: row.id, username: row.username, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set, ssoLinked,
+      isAdmin: !!featureCtx.isAdmin?.(row.id) };
   };
 
   const sendSession = (res, user, sess) => {
@@ -187,9 +190,10 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     try {
       const username = clean(req.body.username, 30);
       const password = typeof req.body.password === 'string' ? req.body.password.slice(0, 200) : '';
-      const row = db.prepare('SELECT id, password_hash FROM users WHERE username = ?').get(username);
+      const row = db.prepare('SELECT id, password_hash, disabled FROM users WHERE username = ?').get(username);
       const ok = await verifyPassword(password, row ? row.password_hash : DUMMY_HASH);
       if (!row || !ok) throw new HttpError(401, 'Benutzername oder Passwort falsch.');
+      if (row.disabled) throw new HttpError(403, 'Dieses Konto wurde gesperrt.');
       if (req.sessionToken) destroySession(db, req.sessionToken);
       sendSession(res, userInfo(row.id), createSession(db, row.id));
     } catch (e) { next(e); }
@@ -250,6 +254,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
           return res.redirect(302, '/?sso_linked=1');
         }
         const user = findOrCreateSsoUser(claims);
+        if (db.prepare('SELECT disabled FROM users WHERE id = ?').get(user.id).disabled) throw new OidcError('account_disabled', 'Konto gesperrt');
         if (req.sessionToken) destroySession(db, req.sessionToken);
         const sess = createSession(db, user.id);
         res.cookie(COOKIE, sess.token, cookieOptions(secureCookies));
@@ -682,6 +687,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     return name;
   };
   const MAX_MEMBERS = 200;
+  const isManager = (role) => role === 'owner' || role === 'admin';
   const groupGid = (req) => {
     const gid = idParam(req, 'gid');
     const role = memberRole(gid, req.user.id);
@@ -691,8 +697,10 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   const groupDetails = (gid, me) => {
     const g = db.prepare('SELECT id, name, owner_id, created_at AS createdAt FROM user_groups WHERE id = ?').get(gid);
     const members = db.prepare(`SELECT u.id, u.username, gm.role FROM group_members gm JOIN users u ON u.id = gm.user_id
-                                WHERE gm.group_id = ? ORDER BY gm.role = 'owner' DESC, u.username`).all(gid);
-    return { id: g.id, name: g.name, createdAt: g.createdAt, isOwner: g.owner_id === me, members };
+                                WHERE gm.group_id = ? ORDER BY CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.username`).all(gid);
+    const myRole = members.find((m) => m.id === me)?.role ?? null;
+    return { id: g.id, name: g.name, createdAt: g.createdAt, isOwner: g.owner_id === me, myRole,
+      canManage: myRole === 'owner' || myRole === 'admin', members };
   };
 
   app.get('/api/groups', requireAuth, (req, res) => {
@@ -730,7 +738,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.patch('/api/groups/:gid', requireAuth, writeLimiter, (req, res, next) => {
     try {
       const { gid, role } = groupGid(req);
-      if (role !== 'owner') throw new HttpError(403, 'Nur der Besitzer kann die Gruppe umbenennen.');
+      if (!isManager(role)) throw new HttpError(403, 'Nur Besitzer und Admins können die Gruppe umbenennen.');
       db.prepare('UPDATE user_groups SET name = ? WHERE id = ?').run(groupName(req.body.name), gid);
       res.json(groupDetails(gid, req.user.id));
     } catch (e) { next(e); }
@@ -748,7 +756,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.post('/api/groups/:gid/members', requireAuth, writeLimiter, (req, res, next) => {
     try {
       const { gid, role } = groupGid(req);
-      if (role !== 'owner') throw new HttpError(403, 'Nur der Besitzer kann Mitglieder hinzufügen.');
+      if (!isManager(role)) throw new HttpError(403, 'Nur Besitzer und Admins können Mitglieder hinzufügen.');
       const users = resolveUsers(usernameList(req.body.usernames, 'Mitglieder').slice(0, 50), 'Mitglieder');
       const { n } = db.prepare('SELECT COUNT(*) n FROM group_members WHERE group_id = ?').get(gid);
       if (n + users.length > MAX_MEMBERS) throw bad(`Eine Gruppe hat höchstens ${MAX_MEMBERS} Mitglieder.`);
@@ -766,8 +774,12 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     try {
       const { gid, role } = groupGid(req);
       const uid = idParam(req, 'uid');
-      if (uid !== req.user.id && role !== 'owner') throw new HttpError(403, 'Nur der Besitzer kann Mitglieder entfernen.');
-      if (memberRole(gid, uid) === 'owner') throw bad('Der Besitzer kann die Gruppe nicht verlassen – lösche sie stattdessen.');
+      const target = memberRole(gid, uid);
+      if (target === 'owner') throw bad('Der Besitzer kann die Gruppe nicht verlassen – übertrage sie vorher oder lösche sie.');
+      // Selbst austreten geht immer; Admins entfernen nur normale Mitglieder, der Besitzer alle
+      if (uid !== req.user.id && !(role === 'owner' || (role === 'admin' && target === 'member'))) {
+        throw new HttpError(403, role === 'admin' ? 'Admins können nur normale Mitglieder entfernen.' : 'Nur Besitzer und Admins können Mitglieder entfernen.');
+      }
       db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(gid, uid);
       res.json({ ok: true });
     } catch (e) { next(e); }
@@ -800,12 +812,14 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   });
 
   // --- Weitere Funktionen (je ein Modul unter src/features/) ---
-  registerFeatures(app, {
+  Object.assign(featureCtx, {
     db, oidc, secureCookies, assets, PAGE_SIZE, UNUSABLE_HASH,
     tx, requireAuth, authLimiter, writeLimiter, readLimiter,
     ACCESS, FOR_ME, BASE, shape, getOne, idParam, memberRole, notify, userInfo,
     resolveUsers, resolveGroups, saveRelations, validateQuote, usernameList, normTag, insertQuote, requireOwnQuote,
+    groupDetails, groupGid, isManager, MAX_MEMBERS,
   });
+  registerFeatures(app, featureCtx);
 
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Nicht gefunden.')));
 

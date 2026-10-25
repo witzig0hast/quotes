@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test --test-force-exit test/api.test.js test/oidc.test.js test/features.test.js test/caching.test.js test/collections-people.test.js test/import.test.js test/social-stats.test.js"
+    "test": "node --test --test-force-exit test/api.test.js test/oidc.test.js test/features.test.js test/caching.test.js test/collections-people.test.js test/import.test.js test/social-stats.test.js test/moderation.test.js"
   },
   "dependencies": {
     "express": "^4.22.3",
