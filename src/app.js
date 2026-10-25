@@ -10,17 +10,13 @@ import {
 } from './auth.js';
 import { OidcError } from './oidc.js';
 import { createAssets, NO_STORE } from './assets.js';
+import { HttpError, bad, clean, escapeLike, placeholders, groupBy } from './util.js';
+import { registerFeatures } from './features/index.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const PAGE_SIZE = 20;
 const VISIBILITIES = ['private', 'shared', 'public'];
 
-class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
-}
-const bad = (msg) => new HttpError(400, msg);
-
-const clean = (v, max) => (typeof v === 'string' ? v.replace(/\r\n/g, '\n').trim() : '').slice(0, max + 1);
 
 const USERNAME_RE = /^[A-Za-z0-9_.-]{3,30}$/;
 const MAX_MENTIONS = 20;
@@ -370,14 +366,6 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
            (SELECT COUNT(*) FROM likes l WHERE l.quote_id = q.id) AS likes,
            EXISTS(SELECT 1 FROM likes l WHERE l.quote_id = q.id AND l.user_id = @me) AS liked
     FROM quotes q JOIN users u ON u.id = q.user_id`;
-  const escapeLike = (s) => s.replace(/[\\%_]/g, '\\$&');
-  const placeholders = (arr) => arr.map(() => '?').join(',');
-
-  const groupBy = (rows, key, val) => {
-    const m = new Map();
-    for (const r of rows) (m.get(r[key]) ?? m.set(r[key], []).get(r[key])).push(val(r));
-    return m;
-  };
 
   const shape = (rows) => {
     if (!rows.length) return [];
@@ -759,6 +747,14 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.post('/api/notifications/read', requireAuth, writeLimiter, (req, res) => {
     db.prepare('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL').run(Date.now(), req.user.id);
     res.json({ ok: true });
+  });
+
+  // --- Weitere Funktionen (je ein Modul unter src/features/) ---
+  registerFeatures(app, {
+    db, oidc, secureCookies, assets, PAGE_SIZE, UNUSABLE_HASH,
+    tx, requireAuth, authLimiter, writeLimiter, readLimiter,
+    ACCESS, FOR_ME, BASE, shape, getOne, idParam, memberRole, notify, userInfo,
+    resolveUsers, resolveGroups, saveRelations, validateQuote, usernameList, normTag,
   });
 
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Nicht gefunden.')));

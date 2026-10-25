@@ -104,13 +104,16 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     );
     CREATE INDEX IF NOT EXISTS idx_tags_tag ON quote_tags(tag);
 
+    -- type wird in der App geprüft (mention, share, group_add, comment, follow, suggestion, …);
+    -- ref_id verweist je nach Typ z. B. auf einen Kommentar oder Vorschlag.
     CREATE TABLE IF NOT EXISTS notifications (
       id         INTEGER PRIMARY KEY,
       user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      type       TEXT NOT NULL CHECK (type IN ('mention','share','group_add')),
+      type       TEXT NOT NULL,
       actor_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       quote_id   INTEGER REFERENCES quotes(id) ON DELETE CASCADE,
       group_id   INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
+      ref_id     INTEGER,
       created_at INTEGER NOT NULL,
       read_at    INTEGER
     );
@@ -118,6 +121,30 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   `);
 
   // Migrationen für bestehende Datenbanken
+  // Alte notifications-Tabelle erlaubte per CHECK nur 3 Typen -> verlustfrei neu aufbauen
+  const notifSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifications'").get()?.sql ?? '';
+  if (/CHECK\s*\(type IN/i.test(notifSql)) {
+    db.exec(`
+      BEGIN;
+      CREATE TABLE notifications_new (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        actor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        quote_id INTEGER REFERENCES quotes(id) ON DELETE CASCADE,
+        group_id INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
+        ref_id INTEGER,
+        created_at INTEGER NOT NULL,
+        read_at INTEGER
+      );
+      INSERT INTO notifications_new (id, user_id, type, actor_id, quote_id, group_id, created_at, read_at)
+        SELECT id, user_id, type, actor_id, quote_id, group_id, created_at, read_at FROM notifications;
+      DROP TABLE notifications;
+      ALTER TABLE notifications_new RENAME TO notifications;
+      CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC);
+      COMMIT;
+    `);
+  }
   const hasColumn = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
   // 0 = Benutzername wurde automatisch vergeben (SSO) und noch nicht bestätigt
   if (!hasColumn('users', 'username_set')) db.exec('ALTER TABLE users ADD COLUMN username_set INTEGER NOT NULL DEFAULT 1');

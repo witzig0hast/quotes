@@ -2,11 +2,13 @@
 // - HTML wird NIE gecacht (Browser, nginx, Cloudflare) und verweist auf versionierte Asset-URLs.
 // - CSS/JS liegen unter /assets/<inhalts-hash>/…: ändert sich der Inhalt, ändert sich die URL.
 //   Diese URLs dürfen deshalb "für immer" gecacht werden – eine alte Version kann nie ausgeliefert werden.
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-const ASSETS = { 'app.js': 'text/javascript; charset=utf-8', 'style.css': 'text/css; charset=utf-8' };
+const TYPES = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+// Nicht versioniert: der Service Worker muss unter fester URL im Wurzelpfad liegen
+const UNVERSIONED = new Set(['sw.js']);
 
 // Gilt für HTML, API und alles Unversionierte: nirgends zwischenspeichern.
 export const NO_STORE = {
@@ -22,7 +24,10 @@ const IMMUTABLE = { 'Cache-Control': 'public, max-age=31536000, immutable' };
 function build(dir) {
   const files = {};
   const hash = createHash('sha256');
-  for (const [name, type] of Object.entries(ASSETS)) {
+  // Alle JS/CSS-Dateien im Wurzelordner (Module importieren sich relativ: ./core.js -> /assets/<v>/core.js)
+  const names = readdirSync(dir).filter((n) => /^[\w.-]+\.(js|css)$/.test(n) && !UNVERSIONED.has(n)).sort();
+  for (const name of names) {
+    const type = TYPES[name.slice(name.lastIndexOf('.'))];
     const body = readFileSync(join(dir, name));
     files[name] = { body, type };
     hash.update(name).update(body);
