@@ -56,8 +56,8 @@ export function registerPeople(app, ctx) {
   app.get('/api/people', requireAuth, readLimiter, handler((req, res) => {
     const q = clean(String(req.query.q ?? ''), 50).slice(0, 50);
     if (!q) return res.json({ people: [] });
-    const rows = db.prepare(`SELECT q.person, COUNT(*) AS n FROM quotes q WHERE q.person LIKE @q ESCAPE '\\' AND ${ACCESS}
-                             GROUP BY q.person COLLATE NOCASE ORDER BY n DESC, q.person LIMIT 8`).all({ q: `%${escapeLike(q)}%`, me: req.user.id });
+    const rows = db.prepare(`SELECT MIN(q.person) AS person, COUNT(*) AS n FROM quotes q WHERE q.person LIKE @q ESCAPE '\\' AND ${ACCESS}
+                             GROUP BY q.person COLLATE NOCASE ORDER BY n DESC, person LIMIT 8`).all({ q: `%${escapeLike(q)}%`, me: req.user.id });
     res.json({ people: rows.map((r) => r.person) });
   }));
 

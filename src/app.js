@@ -10,7 +10,7 @@ import {
 } from './auth.js';
 import { OidcError } from './oidc.js';
 import { createAssets, NO_STORE } from './assets.js';
-import { HttpError, bad, clean, escapeLike, placeholders, groupBy, normText } from './util.js';
+import { HttpError, bad, clean, escapeLike, placeholders, groupBy, normText, editDistance } from './util.js';
 import { registerFeatures } from './features/index.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -366,7 +366,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     SELECT q.id, q.text, q.person, q.source, q.visibility, q.share_token AS shareToken, q.created_at AS createdAt,
            u.username AS author, (q.user_id = @me) AS mine,
            (SELECT COUNT(*) FROM likes l WHERE l.quote_id = q.id) AS likes,
-           EXISTS(SELECT 1 FROM likes l WHERE l.quote_id = q.id AND l.user_id = @me) AS liked
+           EXISTS(SELECT 1 FROM likes l WHERE l.quote_id = q.id AND l.user_id = @me) AS liked,
+           (SELECT COUNT(*) FROM comments cm WHERE cm.quote_id = q.id) AS comments
     FROM quotes q JOIN users u ON u.id = q.user_id`;
 
   const shape = (rows) => {
@@ -383,7 +384,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       WHERE qg.quote_id IN (${placeholders(own)}) ORDER BY g.name`).all(...own), 'quote_id', (r) => ({ id: r.id, name: r.name })) : new Map();
     return rows.map((r) => ({
       id: r.id, text: r.text, person: r.person, source: r.source, createdAt: r.createdAt, author: r.author,
-      mine: !!r.mine, likes: r.likes, liked: !!r.liked, mentions: mentions.get(r.id) ?? [],
+      mine: !!r.mine, likes: r.likes, liked: !!r.liked, comments: r.comments ?? 0, mentions: mentions.get(r.id) ?? [],
       tags: tags.get(r.id) ?? [],
       // Nur für den Eigentümer: Sichtbarkeit, Empfänger, Gruppen, Freigabe-Link
       ...(r.mine ? {
@@ -405,10 +406,10 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     db.prepare('SELECT role FROM group_members WHERE group_id = ? AND user_id = ?').get(groupId, userId)?.role ?? null;
 
   // --- Benachrichtigungen ---
-  const notifyStmt = db.prepare('INSERT INTO notifications (user_id, type, actor_id, quote_id, group_id, created_at) VALUES (?,?,?,?,?,?)');
-  const notify = (userIds, type, actorId, { quoteId = null, groupId = null } = {}) => {
+  const notifyStmt = db.prepare('INSERT INTO notifications (user_id, type, actor_id, quote_id, group_id, ref_id, created_at) VALUES (?,?,?,?,?,?,?)');
+  const notify = (userIds, type, actorId, { quoteId = null, groupId = null, refId = null } = {}) => {
     const now = Date.now();
-    for (const uid of userIds) if (uid !== actorId) notifyStmt.run(uid, type, actorId, quoteId, groupId, now);
+    for (const uid of new Set(userIds)) if (uid !== actorId) notifyStmt.run(uid, type, actorId, quoteId, groupId, refId, now);
   };
 
   // --- Nutzersuche (für Markieren/Teilen/Gruppen) ---
@@ -423,7 +424,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   // --- Zitate ---
   app.get('/api/quotes', requireAuth, (req, res, next) => {
     try {
-      const scope = ['mine', 'feed', 'shared', 'liked', 'group'].includes(req.query.scope) ? req.query.scope : 'feed';
+      const scope = ['mine', 'feed', 'shared', 'liked', 'group', 'user', 'following'].includes(req.query.scope) ? req.query.scope : 'feed';
       const q = clean(String(req.query.q ?? ''), 100).slice(0, 100);
       const page = Math.max(1, Math.min(1000, parseInt(req.query.page, 10) || 1));
       const where = [];
@@ -436,19 +437,60 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
         if (!Number.isSafeInteger(gid) || !memberRole(gid, req.user.id)) throw new HttpError(404, 'Gruppe nicht gefunden.');
         params.gid = gid;
         where.push(`q.visibility = 'shared' AND EXISTS(SELECT 1 FROM quote_groups qg WHERE qg.quote_id = q.id AND qg.group_id = @gid)`);
+      } else if (scope === 'user') {
+        // Profil: Zitate dieses Nutzers, die ich sehen darf
+        const u = db.prepare('SELECT id FROM users WHERE username = ?').get(clean(String(req.query.user ?? ''), 30));
+        if (!u) throw new HttpError(404, 'Nutzer nicht gefunden.');
+        params.uid = u.id;
+        where.push(`q.user_id = @uid AND ${ACCESS}`);
+      } else if (scope === 'following') {
+        where.push(`q.user_id IN (SELECT followee_id FROM follows WHERE follower_id = @me) AND ${ACCESS}`);
       } else where.push(`q.visibility = 'public'`);
       if (q) {
-        where.push(`(q.text LIKE @q ESCAPE '\\' OR q.person LIKE @q ESCAPE '\\' OR q.source LIKE @q ESCAPE '\\'
+        // Tolerant: Text über normalisierte Fassung (Groß/Klein, Akzente, ß/ss, Satzzeichen egal), dazu Person, Quelle, Tags
+        const raw = q.toLowerCase().startsWith('#') ? q.slice(1) : q;
+        const norm = normText(raw); // leer z. B. bei "%" -> dann nur wörtlich suchen
+        where.push(`(q.text LIKE @q ESCAPE '\\'${norm ? ` OR q.text_norm LIKE @qn ESCAPE '\\'` : ''}
+                     OR q.person LIKE @q ESCAPE '\\' OR q.source LIKE @q ESCAPE '\\'
                      OR EXISTS(SELECT 1 FROM quote_tags t WHERE t.quote_id = q.id AND t.tag LIKE @q ESCAPE '\\'))`);
-        params.q = `%${escapeLike(q.toLowerCase().startsWith('#') ? q.slice(1) : q)}%`;
+        params.q = `%${escapeLike(raw)}%`;
+        if (norm) params.qn = `%${escapeLike(norm)}%`;
       }
+      // Zeitraum (YYYY-MM-DD, inklusive)
+      const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? Date.parse(`${v}T00:00:00Z`) : NaN);
+      const from = day(req.query.from), to = day(req.query.to);
+      if (Number.isFinite(from)) { params.from = from; where.push('q.created_at >= @from'); }
+      if (Number.isFinite(to)) { params.to = to + 86_400_000; where.push('q.created_at < @to'); }
+      // Sichtbarkeit (betrifft nur eigene Zitate; fremde haben für mich keine Sichtbarkeitsangabe)
+      if (['private', 'shared', 'public'].includes(req.query.vis)) { params.vis = req.query.vis; where.push('q.user_id = @me AND q.visibility = @vis'); }
       if (req.query.tag) { params.tag = normTag(clean(String(req.query.tag), 31)); where.push('EXISTS(SELECT 1 FROM quote_tags t WHERE t.quote_id = q.id AND t.tag = @tag)'); }
       if (req.query.person) { params.person = clean(String(req.query.person), 100); where.push('q.person = @person COLLATE NOCASE'); }
       const order = req.query.sort === 'top' ? 'likes DESC, q.created_at DESC, q.id DESC' : 'q.created_at DESC, q.id DESC';
       const rows = db.prepare(`${BASE} WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT @limit OFFSET @offset`).all(params);
-      res.json({ quotes: shape(rows.slice(0, PAGE_SIZE)), hasMore: rows.length > PAGE_SIZE });
+      // Keine Treffer? "Meintest du …?" – ähnlichste Person oder ähnlicher Tag (Tippfehler-tolerant)
+      const suggestion = !rows.length && q && page === 1 ? suggest(q, req.user.id) : null;
+      res.json({ quotes: shape(rows.slice(0, PAGE_SIZE)), hasMore: rows.length > PAGE_SIZE, ...(suggestion ? { suggestion } : {}) });
     } catch (e) { next(e); }
   });
+
+  function suggest(query, me) {
+    const words = normText(query).split(' ').filter((w) => w.length >= 3);
+    if (!words.length) return null;
+    const people = db.prepare(`SELECT DISTINCT q.person AS v FROM quotes q WHERE ${ACCESS} LIMIT 3000`).all({ me }).map((r) => r.v);
+    const tags = db.prepare(`SELECT DISTINCT t.tag AS v FROM quote_tags t JOIN quotes q ON q.id = t.quote_id WHERE ${ACCESS} LIMIT 3000`).all({ me }).map((r) => r.v);
+    let best = null;
+    for (const cand of [...people, ...tags]) {
+      for (const part of normText(cand).split(' ')) {
+        for (const w of words) {
+          const max = w.length <= 4 ? 1 : 2;
+          const d = editDistance(w, part, max);
+          if (d > 0 && d <= max && (!best || d < best.d)) best = { d, value: query.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), part) };
+          if (d === 0) return null; // Wort existiert -> kein Tippfehler
+        }
+      }
+    }
+    return best?.value ?? null;
+  }
 
   app.get('/api/quotes/:id', requireAuth, (req, res, next) => {
     try {
@@ -739,13 +781,15 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     const me = req.user.id;
     const items = db.prepare(`
       SELECT n.id, n.type, n.created_at AS createdAt, n.read_at IS NOT NULL AS read, a.username AS actor,
-             n.quote_id AS quoteId, q.text AS quoteText, q.person AS quotePerson, n.group_id AS groupId, g.name AS groupName
+             n.quote_id AS quoteId, q.text AS quoteText, q.person AS quotePerson, n.group_id AS groupId, g.name AS groupName,
+             cm.body AS commentText
       FROM notifications n JOIN users a ON a.id = n.actor_id
       LEFT JOIN quotes q ON q.id = n.quote_id LEFT JOIN user_groups g ON g.id = n.group_id
+      LEFT JOIN comments cm ON cm.id = n.ref_id AND n.type IN ('comment', 'comment_mention')
       WHERE ${VISIBLE_NOTIF}
       ORDER BY n.created_at DESC, n.id DESC LIMIT 50`).all({ me });
     const { unread } = db.prepare(`SELECT COUNT(*) AS unread FROM notifications n WHERE ${VISIBLE_NOTIF} AND n.read_at IS NULL`).get({ me });
-    res.json({ items: items.map((i) => ({ ...i, read: !!i.read, quoteText: i.quoteText?.slice(0, 140) })), unread });
+    res.json({ items: items.map((i) => ({ ...i, read: !!i.read, quoteText: i.quoteText?.slice(0, 140), commentText: i.commentText?.slice(0, 140) ?? undefined })), unread });
   });
 
   app.post('/api/notifications/read', requireAuth, writeLimiter, (req, res) => {

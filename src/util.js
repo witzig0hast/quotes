@@ -29,3 +29,20 @@ export const handler = (fn) => (req, res, next) => {
 /** Für Duplikat-Erkennung und tolerante Suche: klein, ohne Akzente/Umlaut-Punkte, ß->ss, nur Buchstaben/Ziffern. */
 export const normText = (s) => String(s ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
   .replace(/ß/g, 'ss').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+/** Levenshtein-Distanz (für "Meintest du …?"), mit Abbruch ab max. */
+export function editDistance(a, b, max = 3) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      best = Math.min(best, cur[j]);
+    }
+    if (best > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}

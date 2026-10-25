@@ -129,6 +129,25 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
       PRIMARY KEY (collection_id, group_id)
     );
 
+    -- Kommentare unter Zitaten
+    CREATE TABLE IF NOT EXISTS comments (
+      id         INTEGER PRIMARY KEY,
+      quote_id   INTEGER NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_comments_quote ON comments(quote_id, created_at);
+
+    -- Folgen
+    CREATE TABLE IF NOT EXISTS follows (
+      follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      followee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at  INTEGER NOT NULL,
+      PRIMARY KEY (follower_id, followee_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id);
+
     -- Zwischenspeicher für Wikipedia-Kurzbeschreibungen (Personen-Seiten)
     CREATE TABLE IF NOT EXISTS wiki_cache (
       name       TEXT PRIMARY KEY,
