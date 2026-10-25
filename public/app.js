@@ -4,6 +4,7 @@ import {
 } from './core.js';
 import { collectionsView, openCollectionEditor, openAddToCollection, openCollectionLink, renderPublicCollection } from './collections.js';
 import { personHeader, openRandom, duplicateHint, attachPersonSuggest, importSection } from './people.js';
+import { openComments, profileHeader, openStats, openFilters } from './social.js';
 
 const SSO_ERRORS = {
   access_denied: 'Anmeldung wurde abgebrochen oder abgelehnt.',
@@ -84,9 +85,13 @@ async function renderMain({ justLoggedIn = false } = {}) {
   const banner = h('div', { class: 'banner', hidden: true });
   const groupBar = h('div', { class: 'groupbar', hidden: true });
   const collBar = h('section', { class: 'collhead', hidden: true });
-  const subSeg = h('div', { class: 'subseg', role: 'group', 'aria-label': 'Meine', hidden: true },
-    h('button', { 'data-sub': 'mine', onclick: () => setScope('mine') }, 'Zitate'),
-    h('button', { 'data-sub': 'collections', onclick: () => setScope('collections') }, icon('folder', { size: 16 }), 'Sammlungen'));
+  const subSeg = h('div', { class: 'subseg', role: 'group', hidden: true });
+  const SUBS = {
+    feed: [['feed', 'Alle'], ['following', 'Gefolgt']], following: [['feed', 'Alle'], ['following', 'Gefolgt']],
+    mine: [['mine', 'Zitate'], ['collections', 'Sammlungen', 'folder']], collections: [['mine', 'Zitate'], ['collections', 'Sammlungen', 'folder']],
+  };
+  const filterBtn = h('button', { class: 'btn sort-btn filter-btn', title: 'Filter: Zeitraum, Person, Tag, Sichtbarkeit', 'aria-label': 'Filter',
+    onclick: () => openFilters(state, (f) => { Object.assign(state, f); load(true); }) }, icon('sliders'));
   const randomBtn = h('button', { class: 'btn sort-btn random-btn', title: 'Überrasch mich – zufälliges Zitat', 'aria-label': 'Überrasch mich – zufälliges Zitat',
     onclick: () => openRandom(['mine', 'liked'].includes(state.scope) ? state.scope : 'feed', quoteCard) }, icon('shuffle'));
   const filterBar = h('div', { class: 'filters' });
@@ -103,7 +108,10 @@ async function renderMain({ justLoggedIn = false } = {}) {
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value.trim(); load(true); }, 250); });
   more.addEventListener('click', () => loadMore());
 
-  const setScope = (id, extra = {}) => { Object.assign(state, { scope: id, group: null, collection: null, tag: null, person: null }, extra); load(true); window.scrollTo({ top: 0 }); };
+  const setScope = (id, extra = {}) => {
+    Object.assign(state, { scope: id, group: null, collection: null, profile: null, tag: null, person: null, from: null, to: null, vis: null }, extra);
+    load(true); window.scrollTo({ top: 0 });
+  };
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Ansicht' },
     SCOPES.map(([id, label]) => h('button', { 'data-scope': id, onclick: () => setScope(id) }, label)));
   // Handy: Navigationsleiste unten (Daumen-Reichweite), "+" in der Mitte
@@ -119,15 +127,22 @@ async function renderMain({ justLoggedIn = false } = {}) {
       newBtn, bell,
       h('button', { class: 'icon-btn', 'aria-label': 'Gruppen', title: 'Gruppen', onclick: () => openGroups() }, icon('users')),
       h('button', { class: 'icon-btn avatar-btn', 'aria-label': `Konto (@${state.user.username})`, title: `Konto (@${state.user.username})`, onclick: () => openAccount() }, avatar(state.user.username)))),
-    h('main', { class: 'container' }, banner, h('div', { class: 'toolbar' }, seg, h('div', { class: 'search-row' }, h('span', { class: 'search-wrap' }, icon('search'), search), sortBtn, randomBtn)),
+    h('main', { class: 'container' }, banner, h('div', { class: 'toolbar' }, seg, h('div', { class: 'search-row' }, h('span', { class: 'search-wrap' }, icon('search'), search), sortBtn, filterBtn, randomBtn)),
       subSeg, groupBar, collBar, filterBar, daily, list, sentinel, more),
     tabbar);
 
   function syncChrome() {
-    const navScope = ['collections', 'collection'].includes(state.scope) && state.collection?.isOwner !== false ? 'mine' : state.scope;
+    const navScope = ['collections', 'collection'].includes(state.scope) && state.collection?.isOwner !== false ? 'mine'
+      : state.scope === 'following' ? 'feed' : state.scope;
     for (const b of [...seg.children, ...tabbar.querySelectorAll('[data-scope]')]) b.setAttribute('aria-current', navScope === b.dataset.scope ? 'page' : 'false');
-    subSeg.hidden = !['mine', 'collections'].includes(state.scope);
-    for (const b of subSeg.children) b.setAttribute('aria-pressed', String(b.dataset.sub === state.scope));
+    const subs = SUBS[state.scope];
+    subSeg.hidden = !subs;
+    if (subs) {
+      subSeg.setAttribute('aria-label', state.scope === 'mine' || state.scope === 'collections' ? 'Meine' : 'Entdecken');
+      subSeg.replaceChildren(...subs.map(([id, label, ic]) => h('button', { 'aria-pressed': String(id === state.scope), onclick: () => setScope(id) },
+        ic ? icon(ic, { size: 16 }) : null, label)));
+    }
+    filterBtn.classList.toggle('on', !!(state.from || state.to || state.vis));
     const listMode = !['collections', 'collection'].includes(state.scope);
     search.closest('.search-row').hidden = !listMode;
     collBar.hidden = state.scope !== 'collection';
@@ -158,6 +173,12 @@ async function renderMain({ justLoggedIn = false } = {}) {
     const active = [];
     if (state.person) active.push(h('button', { class: 'fchip on', onclick: () => { state.person = null; load(true); }, 'aria-label': `Filter ${state.person} entfernen` }, h('span', {}, state.person), ' ✕'));
     if (state.tag) active.push(h('button', { class: 'fchip on', onclick: () => { state.tag = null; load(true); }, 'aria-label': `Filter #${state.tag} entfernen` }, `#${state.tag} ✕`));
+    if (state.from || state.to) {
+      const d = (v) => new Date(`${v}T00:00:00Z`).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+      const label = state.from && state.to ? `${d(state.from)} – ${d(state.to)}` : state.from ? `ab ${d(state.from)}` : `bis ${d(state.to)}`;
+      active.push(h('button', { class: 'fchip on', onclick: () => { state.from = state.to = null; load(true); }, 'aria-label': 'Zeitraum-Filter entfernen' }, `${label} ✕`));
+    }
+    if (state.vis) active.push(h('button', { class: 'fchip on', onclick: () => { state.vis = null; load(true); }, 'aria-label': 'Sichtbarkeits-Filter entfernen' }, `${VIS[state.vis]} ✕`));
     if (active.length) { filterBar.replaceChildren(h('span', { class: 'flabel' }, 'Filter'), ...active); return; }
     filterBar.replaceChildren();
     if (['group', 'collections', 'collection'].includes(state.scope)) return;
@@ -170,6 +191,12 @@ async function renderMain({ justLoggedIn = false } = {}) {
 
   async function drawDaily() {
     daily.replaceChildren();
+    if (state.scope === 'user') {
+      const who = state.profile;
+      const head = await profileHeader(who);
+      if (state.profile === who) daily.replaceChildren(head);
+      return;
+    }
     if (state.person) {
       const who = state.person;
       const head = await personHeader(who, { onTag: (t) => filterBy({ tag: t }) });
@@ -223,14 +250,16 @@ async function renderMain({ justLoggedIn = false } = {}) {
     try {
       const qs = new URLSearchParams({ scope: state.scope, page, sort: state.sort,
         ...(state.q ? { q: state.q } : {}), ...(state.group ? { group: state.group.id } : {}),
-        ...(state.tag ? { tag: state.tag } : {}), ...(state.person ? { person: state.person } : {}) });
+        ...(state.tag ? { tag: state.tag } : {}), ...(state.person ? { person: state.person } : {}),
+        ...(state.from ? { from: state.from } : {}), ...(state.to ? { to: state.to } : {}), ...(state.vis ? { vis: state.vis } : {}),
+        ...(state.profile ? { user: state.profile } : {}) });
       const res = await api('GET', `/api/quotes?${qs}`);
       if (my !== token) return;
       if (reset) list.replaceChildren();
       for (const q of res.quotes) if (!pendingDeletes.has(q.id)) list.append(quoteCard(q, () => load(true)));
       hasMore = res.hasMore;
       more.hidden = !hasMore || 'IntersectionObserver' in window;
-      if (!list.children.length) list.append(emptyState());
+      if (!list.children.length) list.append(emptyState(res.suggestion, (s) => { state.q = s; search.value = s; load(true); }));
     } catch (ex) {
       if (my !== token) return;
       if (reset) list.replaceChildren();
@@ -252,6 +281,7 @@ async function renderMain({ justLoggedIn = false } = {}) {
   }
 
   state.reload = () => load(true);
+  state.showProfile = (username) => setScope('user', { profile: username });
   state.filterBy = filterBy;
   state.focusSearch = () => { search.focus(); search.select(); };
   state.showGroup = (g) => { Object.assign(state, { scope: 'group', group: { id: g.id, name: g.name }, q: '', tag: null, person: null }); search.value = ''; load(true); window.scrollTo(0, 0); };
@@ -297,8 +327,17 @@ function showLoginBanner(banner, unread) {
   banner.hidden = false;
 }
 
-function emptyState() {
-  const filtered = state.q || state.tag || state.person;
+function emptyState(suggestion, onSuggest) {
+  if (suggestion) {
+    return h('div', { class: 'empty' }, h('b', {}, 'Keine Treffer'),
+      h('p', {}, 'Meintest du ', h('button', { class: 'link-btn', onclick: () => onSuggest(suggestion) }, `„${suggestion}“`), '?'));
+  }
+  if (state.scope === 'following') {
+    return h('div', { class: 'empty' }, h('b', {}, 'Noch niemandem gefolgt'),
+      h('p', {}, 'Tippe bei einem Zitat auf den Namen, um das Profil zu öffnen, und folge Leuten, deren Zitate dir gefallen.'));
+  }
+  if (state.scope === 'user') return h('div', { class: 'empty' }, h('b', {}, 'Keine sichtbaren Zitate'));
+  const filtered = state.q || state.tag || state.person || state.from || state.to || state.vis;
   const reset = filtered ? h('button', { class: 'btn', onclick: () => state.filterBy?.({}) }, 'Filter zurücksetzen') : null;
   if (filtered) return h('div', { class: 'empty' }, h('b', {}, 'Keine Treffer'), h('p', {}, 'Versuche einen anderen Suchbegriff oder Filter.'), reset);
   if (state.scope === 'group') {
@@ -365,6 +404,10 @@ function quoteCard(q, reload, { compact = false } = {}) {
   }, heart(), likeCount);
 
   const sharedCount = q.mine && q.visibility === 'shared' ? q.shareWith.length + q.shareGroups.length : 0;
+  const commentCount = h('span', {}, String(q.comments ?? 0));
+  const commentBtn = h('button', { class: 'act', 'aria-label': `Kommentare (${q.comments ?? 0})`, title: 'Kommentare',
+    onclick: () => openComments(q, { onCount: (n) => { q.comments = n; commentCount.textContent = String(n); commentBtn.setAttribute('aria-label', `Kommentare (${n})`); } }) },
+  icon('message'), commentCount);
   let card;
   const inOwnCollection = state.scope === 'collection' && state.collection?.isOwner;
   const moreBtn = !compact ? h('button', { class: 'act', 'aria-label': 'Weitere Aktionen', 'aria-haspopup': 'menu', title: 'Mehr',
@@ -382,7 +425,8 @@ function quoteCard(q, reload, { compact = false } = {}) {
 
   card = h('article', { class: 'card quote' },
     h('header', { class: 'qhead' }, avatar(q.mine ? state.user.username : q.author),
-      h('span', { class: 'qwho' }, h('b', {}, q.mine ? 'Du' : `@${q.author}`), h('span', {}, relTime(q.createdAt))),
+      h('span', { class: 'qwho' }, h('button', { class: 'author-link', title: `Profil von @${q.author}`, onclick: () => { document.querySelector('dialog[open]')?.close(); state.showProfile?.(q.author); } },
+        q.mine ? 'Du' : `@${q.author}`), h('span', {}, relTime(q.createdAt))),
       q.mine ? h('span', { class: `badge ${q.visibility}`, title: q.visibility === 'shared' ? `Geteilt mit ${plural(sharedCount, 'Empfänger', 'Empfängern')}` : null },
         VIS[q.visibility] + (sharedCount ? ` · ${sharedCount}` : '')) : null,
       q.mine && q.link ? h('span', { class: 'badge', title: 'Per Link geteilt' }, icon('link', { size: 12 })) : null),
@@ -394,6 +438,7 @@ function quoteCard(q, reload, { compact = false } = {}) {
     q.mentions.length ? h('div', { class: 'mentions' }, h('span', {}, 'Markiert'),
       q.mentions.map((m) => h('span', { class: `mention${m === state.user?.username ? ' me' : ''}` }, `@${m}`))) : null,
     compact ? null : h('footer', { class: 'qactions' }, likeBtn,
+      commentBtn,
       h('button', { class: 'act', 'aria-label': 'Kopieren', title: 'Kopieren', onclick: () => copyQuote(q) }, icon('copy')),
       h('button', { class: 'act', 'aria-label': 'Als Bild teilen', title: 'Als Bild', onclick: () => openImage(q) }, icon('image')),
       h('div', { class: 'spacer' }), moreBtn));
@@ -581,15 +626,23 @@ async function openNotifications() {
         mention: [h('b', {}, `@${n.actor}`), ' hat dich in einem Zitat markiert'],
         share: [h('b', {}, `@${n.actor}`), ' hat ein Zitat mit dir geteilt'],
         group_add: [h('b', {}, `@${n.actor}`), ' hat dich zur Gruppe ', h('b', {}, `„${n.groupName}“`), ' hinzugefügt'],
-      }[n.type];
+        comment: [h('b', {}, `@${n.actor}`), ' hat dein Zitat kommentiert'],
+        comment_mention: [h('b', {}, `@${n.actor}`), ' hat dich in einem Kommentar erwähnt'],
+        follow: [h('b', {}, `@${n.actor}`), ' folgt dir jetzt'],
+      }[n.type] ?? [h('b', {}, `@${n.actor}`), ' hat etwas mit dir geteilt'];
       const open = async () => {
         dlg.close();
         if (n.groupId) return openGroup(n.groupId);
-        try { const q = await api('GET', `/api/quotes/${n.quoteId}`); openQuote(q); } catch (ex) { toast(ex.message); }
+        if (n.type === 'follow') return state.showProfile?.(n.actor);
+        try {
+          const q = await api('GET', `/api/quotes/${n.quoteId}`);
+          if (n.type === 'comment' || n.type === 'comment_mention') openComments(q); else openQuote(q);
+        } catch (ex) { toast(ex.message); }
       };
       return h('button', { class: `notif${n.read ? '' : ' unread'}`, onclick: open },
         h('div', {}, ...what),
-        n.quoteText ? h('div', { class: 'notif-quote' }, `„${n.quoteText}${n.quoteText.length >= 140 ? '…' : ''}“ — ${n.quotePerson}`) : null,
+        n.commentText ? h('div', { class: 'notif-comment' }, `„${n.commentText}${n.commentText.length >= 140 ? '…' : ''}“`) : null,
+        n.quoteText && !n.commentText ? h('div', { class: 'notif-quote' }, `„${n.quoteText}${n.quoteText.length >= 140 ? '…' : ''}“ — ${n.quotePerson}`) : null,
         h('div', { class: 'notif-time' }, relTime(n.createdAt)));
     }));
   } catch (ex) { list.replaceChildren(h('p', { class: 'error' }, ex.message)); }
@@ -738,6 +791,9 @@ function openAccount() {
     h('div', { class: 'dialog-head' }, h('h2', {}, 'Konto'), h('button', { class: 'btn sm', onclick: () => { dlg.close(); logout(); } }, 'Abmelden')),
     h('div', { class: 'acc-id' }, avatar(state.user.username), h('div', {}, h('b', {}, `@${state.user.username}`),
       h('span', { class: 'hint' }, state.user.sso ? 'Konto über SSO' : state.user.ssoLinked ? 'Passwort + SSO' : 'Passwort-Konto'))),
+    h('div', { class: 'row left acc-links' },
+      h('button', { class: 'btn', onclick: () => { dlg.close(); openStats(); } }, icon('chart', { size: 18 }), h('span', {}, 'Statistik')),
+      h('button', { class: 'btn', onclick: () => { dlg.close(); state.showProfile?.(state.user.username); } }, icon('user', { size: 18 }), h('span', {}, 'Mein Profil'))),
     nameForm,
     themeSection(),
     h('section', { class: 'acc-section' }, h('label', {}, 'Zitate exportieren'),

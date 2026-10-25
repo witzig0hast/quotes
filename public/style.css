@@ -490,3 +490,77 @@ dialog .dialog-head .icon-btn { font-size: 1.1rem; }
 .collhead .coll-intro { margin: 0 0 12px; }
 .collhead-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .collhead-actions .btn { gap: 6px; }
+
+/* ===================== Etappe B: Kommentare, Profile, Statistik, Filter ===================== */
+.author-link { border: 0; background: transparent; padding: 0; cursor: pointer; font-weight: 700; font-size: .9rem; color: var(--fg); text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.author-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+select { width: 100%; min-height: var(--tap); padding: 10px 14px; font-size: 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
+input[type=date] { width: 100%; min-height: var(--tap); padding: 10px 14px; font-size: 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
+label.sub { margin-top: 0; font-size: .72rem; color: var(--muted); }
+.filters.quick { margin: 10px 0 0; padding: 0; }
+.filter-btn.on { background: var(--invert-bg); color: var(--invert-fg); border-color: var(--invert-bg); }
+.acc-links { margin: 12px 0 0; }
+.acc-links .btn { gap: 8px; }
+.tag.static { cursor: default; }
+.tag.static:hover { background: var(--soft); color: var(--fg); }
+
+/* Kommentare */
+dialog.comments-dialog { width: min(600px, calc(100vw - 24px)); }
+.comments { display: grid; gap: 14px; margin: 14px 0; max-height: 50dvh; overflow: auto; padding-right: 4px; }
+.comment { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }
+.comment .avatar { width: 30px; height: 30px; font-size: .65rem; }
+.comment-body { background: var(--soft); border-radius: 4px 16px 16px 16px; padding: 10px 14px; min-width: 0; }
+.comment.mine .comment-body { background: color-mix(in srgb, var(--fg) 8%, var(--bg)); }
+.comment-head { display: flex; align-items: baseline; gap: 8px; font-size: .82rem; }
+.comment-head span { color: var(--muted); }
+.comment-head .link-btn { margin-left: auto; font-size: .78rem; color: var(--muted); font-weight: 600; }
+.comment-body p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mention-link { border: 0; background: transparent; padding: 0; font: inherit; font-weight: 700; cursor: pointer; color: var(--fg); }
+.mention-link:hover { text-decoration: underline; }
+.comment-form textarea { min-height: 60px; font-family: var(--font); font-size: 16px; }
+.comment-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.comment-actions .error { flex: 1; margin: 0; min-height: 0; }
+.comment-actions .btn { margin-left: auto; }
+.notif-comment { font-size: .95rem; color: var(--fg); font-style: italic; }
+
+/* Profil */
+.profile-head { display: grid; grid-template-columns: auto 1fr auto; gap: 16px; align-items: center; margin-bottom: 18px; padding: clamp(18px, 4vw, 26px);
+  border: 1px solid var(--line-strong); border-radius: calc(var(--radius) + 4px); animation: pop .25s ease-out; }
+.profile-head > .skeleton { grid-column: 1 / -1; border: 0; padding: 0; }
+.profile-head > .avatar { width: 64px; height: 64px; font-size: 1.3rem; }
+.profile-body h2 { margin: 0; font-family: var(--serif); font-size: clamp(1.4rem, 5vw, 1.9rem); overflow-wrap: anywhere; }
+.profile-body .person-stats { margin: 4px 0 8px; }
+@media (max-width: 520px) { .profile-head { grid-template-columns: auto 1fr; } .profile-head > .btn { grid-column: 1 / -1; width: 100%; } }
+
+/* Statistik */
+dialog.stats-dialog { width: min(680px, calc(100vw - 24px)); }
+.stats h3 { margin: 22px 0 10px; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.stat-tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 10px; }
+@media (min-width: 600px) { .stat-tiles { grid-template-columns: repeat(4, 1fr); } }
+.stat-tile { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; }
+.stat-tile b { font-family: var(--serif); font-size: 2.1rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat-tile span { font-weight: 700; font-size: .85rem; }
+.stat-tile small { color: var(--muted); font-size: .75rem; line-height: 1.35; }
+.bars { display: grid; grid-template-columns: repeat(12, 1fr); gap: 2px; align-items: end; height: 150px; padding-bottom: 22px; position: relative;
+  border-bottom: 1px solid var(--line); }
+.bar-col { position: relative; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; cursor: default; outline-offset: 2px; }
+.bar { width: min(60%, 22px); background: var(--fg); border-radius: 4px 4px 0 0; transition: opacity .15s; }
+.bar.zero { background: var(--line); }
+.bar-label { position: absolute; bottom: -20px; font-size: .7rem; color: var(--muted); }
+.bars:hover .bar, .bars:focus-within .bar { opacity: .45; }
+.bar-col:hover .bar, .bar-col:focus .bar { opacity: 1; }
+.bar-col:hover::after, .bar-col:focus::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+  white-space: nowrap; padding: 4px 10px; border-radius: 8px; background: var(--invert-bg); color: var(--invert-fg); font-size: .75rem; font-weight: 600; z-index: 2; }
+.bar-col:first-child:hover::after, .bar-col:first-child:focus::after { left: 0; transform: none; }
+.bar-col:last-child:hover::after, .bar-col:last-child:focus::after { left: auto; right: 0; transform: none; }
+.stat-cols { display: grid; gap: 0 24px; }
+@media (min-width: 560px) { .stat-cols { grid-template-columns: 1fr 1fr; } }
+.rank { list-style: none; margin: 0; padding: 0; counter-reset: r; }
+.rank li { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); counter-increment: r; }
+.rank li::before { content: counter(r); width: 18px; color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.rank li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Korrekturen nach Browser-Test (Etappe B) */
+@media (min-width: 700px) { .toolbar { flex-direction: column; align-items: stretch; } .toolbar .seg { align-self: flex-start; } }
+@media (max-width: 560px) { dialog[class] { width: 100%; max-width: none; } }

@@ -42,6 +42,9 @@ export const ICONS = {
   folder: 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z',
   upload: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
   minus: 'M5 12h14',
+  message: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  sliders: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
+  chart: 'M3 3v18h18M7 16v-5M12 16V8M17 16V5',
 };
 export function icon(name, { filled = false, size = 20 } = {}) {
   const NS = 'http://www.w3.org/2000/svg';

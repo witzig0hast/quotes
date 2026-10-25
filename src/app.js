@@ -480,11 +480,13 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     const tags = db.prepare(`SELECT DISTINCT t.tag AS v FROM quote_tags t JOIN quotes q ON q.id = t.quote_id WHERE ${ACCESS} LIMIT 3000`).all({ me }).map((r) => r.v);
     let best = null;
     for (const cand of [...people, ...tags]) {
-      for (const part of normText(cand).split(' ')) {
+      for (const original of cand.split(/\s+/)) {
+        const part = normText(original);
+        const nice = original.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''); // Schreibweise aus dem Original
         for (const w of words) {
           const max = w.length <= 4 ? 1 : 2;
           const d = editDistance(w, part, max);
-          if (d > 0 && d <= max && (!best || d < best.d)) best = { d, value: query.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), part) };
+          if (d > 0 && d <= max && (!best || d < best.d)) best = { d, value: query.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), nice) };
           if (d === 0) return null; // Wort existiert -> kein Tippfehler
         }
       }

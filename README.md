@@ -62,6 +62,10 @@ Hinweise:
 - **Personen-Seiten**: Klick auf eine Person zeigt Anzahl, Tags und (optional) eine Kurzbeschreibung von Wikipedia (`WIKIPEDIA=off` schaltet das ab, `WIKIPEDIA_LANG=en` wechselt die Sprache)
 - **Überrasch mich**: zufälliges Zitat aus Entdecken, Meine oder Favoriten
 - **Duplikat-Hinweis** beim Anlegen – erkennt dasselbe Zitat auch mit anderer Schreibweise (Groß/Klein, Satzzeichen, Umlaute)
+- **Kommentare** unter Zitaten (💬 an jeder Karte), mit @Erwähnungen; benachrichtigt werden der Eigentümer und Erwähnte – aber nur, wenn sie das Zitat sehen dürfen. Eigentümer können Kommentare unter ihren Zitaten löschen
+- **Folgen & Profile**: Klick auf einen Namen öffnet das Profil (Zitate, Follower, Tags – nur Sichtbares); *Entdecken → Gefolgt* zeigt Zitate der Leute, denen du folgst
+- **Statistik** (*Konto → Statistik*): Anzahl, Herzen, Serie („Tage in Folge“), Zitate pro Monat, meistzitierte Personen und Tags
+- **Erweiterte Suche**: tolerant gegenüber Groß/Klein, Akzenten, ß/ss und Satzzeichen; Filter nach Zeitraum, Person, Tag und (bei eigenen Zitaten) Sichtbarkeit; bei Tippfehlern „Meintest du …?“
 - Löschen mit **Rückgängig**, automatisches Nachladen beim Scrollen, Ladeplatzhalter
 - Handy: Navigationsleiste unten mit „+“ in der Mitte; Desktop: Tabs oben
 - Farbschema **System / Hell / Dunkel** umschaltbar; Tastenkürzel `N` (neues Zitat), `/` (Suche), `Strg/⌘ + Enter` (speichern)

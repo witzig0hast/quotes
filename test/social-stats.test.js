@@ -71,7 +71,7 @@ test('Erweiterte Suche: tolerant, Zeitraum, Sichtbarkeit, "Meintest du"', async 
   assert.deepEqual(await t('to=2000-01-01'), []);
   assert.equal((await t('from=kaputt')).length, 2); // ungültig -> ignoriert
   const miss = await a.get('/api/quotes?scope=mine&q=Nietsche');
-  assert.deepEqual([miss.quotes.length, miss.suggestion], [0, 'nietzsche']);
+  assert.deepEqual([miss.quotes.length, miss.suggestion], [0, 'Nietzsche']);
   assert.equal((await a.get('/api/quotes?scope=mine&q=xyzabc')).suggestion, undefined);
 });
 
