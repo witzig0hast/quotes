@@ -57,7 +57,11 @@ Hinweise:
 - Sortierung **Neueste / Beliebteste**, Suche über Text, Person, Quelle und Tags
 - **Zitat des Tages** auf „Entdecken“ (aus den öffentlichen Zitaten, täglich neu)
 - **Zitat als Bild** (1080 × 1350, hell oder dunkel) herunterladen oder direkt teilen; Zitat mit einem Tipp kopieren
-- **Export** der eigenen Sammlung als CSV (Excel) oder JSON
+- **Export** der eigenen Zitate als CSV (Excel) oder JSON – und **Import** aus CSV (Excel, Spalten „Zitat“/„text“, „Person“, optional „Quelle“, „Tags“) oder JSON; Doppelte werden übersprungen
+- **Sammlungen**: eigene Listen („Für schlechte Tage“, „Hochzeitsrede“ …) unter *Meine → Sammlungen*; Zitate über das ⋯-Menü hinzufügen; mit Gruppen oder per geheimem Link teilen. Wer eine Sammlung sieht, sieht darin die eigenen Zitate des Eigentümers und alles, was er ohnehin sehen darf – fremde private Zitate nie
+- **Personen-Seiten**: Klick auf eine Person zeigt Anzahl, Tags und (optional) eine Kurzbeschreibung von Wikipedia (`WIKIPEDIA=off` schaltet das ab, `WIKIPEDIA_LANG=en` wechselt die Sprache)
+- **Überrasch mich**: zufälliges Zitat aus Entdecken, Meine oder Favoriten
+- **Duplikat-Hinweis** beim Anlegen – erkennt dasselbe Zitat auch mit anderer Schreibweise (Groß/Klein, Satzzeichen, Umlaute)
 - Löschen mit **Rückgängig**, automatisches Nachladen beim Scrollen, Ladeplatzhalter
 - Handy: Navigationsleiste unten mit „+“ in der Mitte; Desktop: Tabs oben
 - Farbschema **System / Hell / Dunkel** umschaltbar; Tastenkürzel `N` (neues Zitat), `/` (Suche), `Strg/⌘ + Enter` (speichern)

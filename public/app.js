@@ -2,6 +2,8 @@
 import {
   $app, $toast, state, h, ICONS, icon, toast, applyTheme, getTheme, setTheme, checkVersion, api, plural, fmtDate, relTime, modal, chipInput, setUser, VIS, quoteAsText, avatar, popMenu,
 } from './core.js';
+import { collectionsView, openCollectionEditor, openAddToCollection, openCollectionLink, renderPublicCollection } from './collections.js';
+import { personHeader, openRandom, duplicateHint, attachPersonSuggest, importSection } from './people.js';
 
 const SSO_ERRORS = {
   access_denied: 'Anmeldung wurde abgebrochen oder abgelehnt.',
@@ -81,6 +83,12 @@ async function renderMain({ justLoggedIn = false } = {}) {
   const list = h('div', { class: 'list', 'aria-live': 'polite' });
   const banner = h('div', { class: 'banner', hidden: true });
   const groupBar = h('div', { class: 'groupbar', hidden: true });
+  const collBar = h('section', { class: 'collhead', hidden: true });
+  const subSeg = h('div', { class: 'subseg', role: 'group', 'aria-label': 'Meine', hidden: true },
+    h('button', { 'data-sub': 'mine', onclick: () => setScope('mine') }, 'Zitate'),
+    h('button', { 'data-sub': 'collections', onclick: () => setScope('collections') }, icon('folder', { size: 16 }), 'Sammlungen'));
+  const randomBtn = h('button', { class: 'btn sort-btn random-btn', title: 'Überrasch mich – zufälliges Zitat', 'aria-label': 'Überrasch mich – zufälliges Zitat',
+    onclick: () => openRandom(['mine', 'liked'].includes(state.scope) ? state.scope : 'feed', quoteCard) }, icon('shuffle'));
   const filterBar = h('div', { class: 'filters' });
   const daily = h('div', { class: 'daily-slot' });
   const sentinel = h('div', { class: 'sentinel', 'aria-hidden': 'true' });
@@ -95,7 +103,7 @@ async function renderMain({ justLoggedIn = false } = {}) {
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value.trim(); load(true); }, 250); });
   more.addEventListener('click', () => loadMore());
 
-  const setScope = (id) => { Object.assign(state, { scope: id, group: null, tag: null, person: null }); load(true); window.scrollTo({ top: 0 }); };
+  const setScope = (id, extra = {}) => { Object.assign(state, { scope: id, group: null, collection: null, tag: null, person: null }, extra); load(true); window.scrollTo({ top: 0 }); };
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Ansicht' },
     SCOPES.map(([id, label]) => h('button', { 'data-scope': id, onclick: () => setScope(id) }, label)));
   // Handy: Navigationsleiste unten (Daumen-Reichweite), "+" in der Mitte
@@ -111,12 +119,29 @@ async function renderMain({ justLoggedIn = false } = {}) {
       newBtn, bell,
       h('button', { class: 'icon-btn', 'aria-label': 'Gruppen', title: 'Gruppen', onclick: () => openGroups() }, icon('users')),
       h('button', { class: 'icon-btn avatar-btn', 'aria-label': `Konto (@${state.user.username})`, title: `Konto (@${state.user.username})`, onclick: () => openAccount() }, avatar(state.user.username)))),
-    h('main', { class: 'container' }, banner, h('div', { class: 'toolbar' }, seg, h('div', { class: 'search-row' }, h('span', { class: 'search-wrap' }, icon('search'), search), sortBtn)),
-      groupBar, filterBar, daily, list, sentinel, more),
+    h('main', { class: 'container' }, banner, h('div', { class: 'toolbar' }, seg, h('div', { class: 'search-row' }, h('span', { class: 'search-wrap' }, icon('search'), search), sortBtn, randomBtn)),
+      subSeg, groupBar, collBar, filterBar, daily, list, sentinel, more),
     tabbar);
 
   function syncChrome() {
-    for (const b of [...seg.children, ...tabbar.querySelectorAll('[data-scope]')]) b.setAttribute('aria-current', state.scope === b.dataset.scope ? 'page' : 'false');
+    const navScope = ['collections', 'collection'].includes(state.scope) && state.collection?.isOwner !== false ? 'mine' : state.scope;
+    for (const b of [...seg.children, ...tabbar.querySelectorAll('[data-scope]')]) b.setAttribute('aria-current', navScope === b.dataset.scope ? 'page' : 'false');
+    subSeg.hidden = !['mine', 'collections'].includes(state.scope);
+    for (const b of subSeg.children) b.setAttribute('aria-pressed', String(b.dataset.sub === state.scope));
+    const listMode = !['collections', 'collection'].includes(state.scope);
+    search.closest('.search-row').hidden = !listMode;
+    collBar.hidden = state.scope !== 'collection';
+    if (state.scope === 'collection') {
+      const c = state.collection;
+      collBar.replaceChildren(
+        h('div', { class: 'collhead-top' }, h('span', { class: 'daily-label' }, c.isOwner ? 'Sammlung' : `Sammlung von @${c.owner}`),
+          h('button', { class: 'icon-btn sm', 'aria-label': 'Sammlung schließen', onclick: () => setScope(c.isOwner ? 'collections' : 'feed') }, '✕')),
+        h('h2', {}, c.name),
+        c.description ? h('p', { class: 'coll-intro' }, c.description) : null,
+        c.isOwner ? h('div', { class: 'collhead-actions' },
+          h('button', { class: 'btn sm', onclick: () => openCollectionLink(c, () => load(true)) }, icon('link', { size: 16 }), h('span', {}, c.link ? 'Link verwalten' : 'Per Link teilen')),
+          h('button', { class: 'btn sm', onclick: () => openCollectionEditor(c, (sv) => { state.collection = { ...c, ...sv }; load(true); }, () => setScope('collections')) }, icon('edit', { size: 16 }), h('span', {}, 'Bearbeiten'))) : null);
+    }
     sortBtn.replaceChildren(icon('sort'), h('span', {}, state.sort === 'top' ? 'Beliebteste' : 'Neueste'));
     sortBtn.classList.toggle('on', state.sort === 'top');
     sortBtn.setAttribute('aria-label', `Sortierung: ${state.sort === 'top' ? 'Beliebteste' : 'Neueste'} (umschalten)`);
@@ -135,7 +160,7 @@ async function renderMain({ justLoggedIn = false } = {}) {
     if (state.tag) active.push(h('button', { class: 'fchip on', onclick: () => { state.tag = null; load(true); }, 'aria-label': `Filter #${state.tag} entfernen` }, `#${state.tag} ✕`));
     if (active.length) { filterBar.replaceChildren(h('span', { class: 'flabel' }, 'Filter'), ...active); return; }
     filterBar.replaceChildren();
-    if (state.scope === 'group') return;
+    if (['group', 'collections', 'collection'].includes(state.scope)) return;
     try {
       const { tags } = await api('GET', `/api/tags${state.scope === 'mine' ? '?scope=mine' : ''}`);
       if (state.tag || state.person || !tags.length) return;
@@ -145,6 +170,12 @@ async function renderMain({ justLoggedIn = false } = {}) {
 
   async function drawDaily() {
     daily.replaceChildren();
+    if (state.person) {
+      const who = state.person;
+      const head = await personHeader(who, { onTag: (t) => filterBy({ tag: t }) });
+      if (state.person === who) daily.replaceChildren(head);
+      return;
+    }
     if (state.scope !== 'feed' || state.q || state.tag || state.person) return;
     try {
       const { quote: q } = await api('GET', '/api/daily');
@@ -171,6 +202,24 @@ async function renderMain({ justLoggedIn = false } = {}) {
       drawFilters(); drawDaily();
     }
     loading = true;
+    if (state.scope === 'collections') {
+      const view = await collectionsView((c) => setScope('collection', { collection: c }));
+      if (my === token) { list.replaceChildren(view); hasMore = false; loading = false; }
+      return;
+    }
+    if (state.scope === 'collection') {
+      try {
+        const res = await api('GET', `/api/collections/${state.collection.id}?page=${page}`);
+        if (my !== token) return;
+        state.collection = res.collection; syncChrome();
+        if (reset) list.replaceChildren();
+        for (const q of res.quotes) if (!pendingDeletes.has(q.id)) list.append(quoteCard(q, () => load(true)));
+        hasMore = res.hasMore;
+        if (!list.querySelector('.quote')) list.append(h('div', { class: 'empty' }, h('b', {}, 'Noch leer'),
+          h('p', {}, res.collection.isOwner ? 'Füge Zitate über das ⋯-Menü einer Karte hinzu („Zu Sammlung …“).' : 'In dieser Sammlung ist noch nichts, das du sehen kannst.')));
+      } catch (ex) { if (my === token) { toast(ex.message); setScope('collections'); } } finally { if (my === token) loading = false; }
+      return;
+    }
     try {
       const qs = new URLSearchParams({ scope: state.scope, page, sort: state.sort,
         ...(state.q ? { q: state.q } : {}), ...(state.group ? { group: state.group.id } : {}),
@@ -317,11 +366,18 @@ function quoteCard(q, reload, { compact = false } = {}) {
 
   const sharedCount = q.mine && q.visibility === 'shared' ? q.shareWith.length + q.shareGroups.length : 0;
   let card;
-  const moreBtn = q.mine && !compact ? h('button', { class: 'act', 'aria-label': 'Weitere Aktionen', 'aria-haspopup': 'menu', title: 'Mehr',
+  const inOwnCollection = state.scope === 'collection' && state.collection?.isOwner;
+  const moreBtn = !compact ? h('button', { class: 'act', 'aria-label': 'Weitere Aktionen', 'aria-haspopup': 'menu', title: 'Mehr',
     onclick: (e) => popMenu(e.currentTarget, [
-      ['edit', 'Bearbeiten', () => openEditor(q)],
-      ['link', q.link ? 'Link verwalten' : 'Per Link teilen', () => openLink(q, reload)],
-      ['trash', 'Löschen', () => deleteWithUndo(q, card), 'danger'],
+      ['folder', 'Zu Sammlung …', () => openAddToCollection(q)],
+      ...(inOwnCollection ? [['minus', 'Aus dieser Sammlung entfernen', async () => {
+        try { await api('DELETE', `/api/collections/${state.collection.id}/quotes/${q.id}`); card.remove(); toast('Aus der Sammlung entfernt'); } catch (ex) { toast(ex.message); }
+      }]] : []),
+      ...(q.mine ? [
+        ['edit', 'Bearbeiten', () => openEditor(q)],
+        ['link', q.link ? 'Link verwalten' : 'Per Link teilen', () => openLink(q, reload)],
+        ['trash', 'Löschen', () => deleteWithUndo(q, card), 'danger'],
+      ] : []),
     ]) }, icon('more')) : null;
 
   card = h('article', { class: 'card quote' },
@@ -454,6 +510,7 @@ async function openEditor(q) {
   h('div', { class: 'dialog-head' }, h('h2', {}, q ? 'Zitat bearbeiten' : 'Neues Zitat'),
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Schließen', onclick: () => dlg.close() }, '✕')),
   h('div', { class: 'label-row' }, h('label', { for: 'f-text' }, 'Zitat'), counter), text,
+  duplicateHint(text, q?.id, { onOpen: (d) => { dlg.close(); openQuote(d); } }), attachPersonSuggest(person),
   h('div', { class: 'grid2' },
     h('div', {}, h('label', { for: 'f-person' }, 'Person'), person),
     h('div', {}, h('label', { for: 'f-source' }, 'Quelle'), source)),
@@ -683,11 +740,12 @@ function openAccount() {
       h('span', { class: 'hint' }, state.user.sso ? 'Konto über SSO' : state.user.ssoLinked ? 'Passwort + SSO' : 'Passwort-Konto'))),
     nameForm,
     themeSection(),
-    h('section', { class: 'acc-section' }, h('label', {}, 'Sammlung exportieren'),
+    h('section', { class: 'acc-section' }, h('label', {}, 'Zitate exportieren'),
       h('p', { class: 'hint' }, 'Alle deine Zitate inklusive Tags und Freigaben – als Sicherung oder für Excel.'),
       h('div', { class: 'row left' },
         h('a', { class: 'btn', href: '/api/export?format=csv', download: true }, icon('download'), h('span', {}, 'CSV (Excel)')),
         h('a', { class: 'btn', href: '/api/export?format=json', download: true }, icon('download'), h('span', {}, 'JSON')))),
+    importSection(() => state.reload?.()),
     ssoSection(() => dlg),
     h('p', { class: 'hint shortcuts' }, 'Tastenkürzel: N – neues Zitat · / – Suche · Strg/⌘ + Enter – speichern'),
     h('details', { class: 'danger-zone' }, h('summary', {}, 'Konto löschen'), delForm),
@@ -767,6 +825,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 function render(opts) {
+  const c = location.pathname.match(/^\/c\/([A-Za-z0-9_-]+)$/);
+  if (c) return renderPublicCollection(c[1]);
   const m = location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)$/);
   if (m) return renderPublic(m[1]);
   return state.user ? renderMain(opts) : renderAuth();
@@ -775,7 +835,7 @@ function render(opts) {
 state.onUnauthorized = () => render();
 
 (async () => {
-  if (location.pathname.startsWith('/s/')) return render();
+  if (/^\/[sc]\//.test(location.pathname)) return render();
   try { state.config = await api('GET', '/api/config'); } catch { /* Standard */ }
   const params = new URLSearchParams(location.search);
   if (params.has('sso_linked')) {
