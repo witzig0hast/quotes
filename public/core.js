@@ -1,4 +1,11 @@
 // Gemeinsame Bausteine für alle Frontend-Module. Bewusst ohne innerHTML: Nutzerinhalte nur per textContent (XSS-sicher).
+
+// Optionale Teile (cond ? el : null) sollen wie in h() einfach wegfallen statt als Text "null" zu erscheinen.
+// Gilt nur für null/undefined/false – alles andere verhält sich wie gewohnt.
+for (const method of ['replaceChildren', 'append']) {
+  const original = Element.prototype[method];
+  Element.prototype[method] = function (...nodes) { return original.apply(this, nodes.filter((n) => n != null && n !== false)); };
+}
 export const $app = document.getElementById('app');
 export const $toast = document.getElementById('toast');
 export const state = {
@@ -194,16 +201,20 @@ export function popMenu(anchor, items) {
   const menu = h('div', { class: 'menu', role: 'menu' }, items.map(([ic, label, fn, cls]) => h('button', {
     role: 'menuitem', class: cls ?? null, onclick: () => { close(); fn(); },
   }, icon(ic), label)));
-  const close = () => { menu.remove(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', esc, true); anchor.setAttribute('aria-expanded', 'false'); };
+  const close = () => { menu.remove(); removeEventListener('scroll', onScroll, { capture: true }); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', esc, true); anchor.setAttribute('aria-expanded', 'false'); };
   const outside = (e) => { if (!menu.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close(); };
   const esc = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); anchor.focus(); } };
-  document.body.append(menu);
+  // In einem modalen Dialog ist alles außerhalb inert -> Menü in den Dialog hängen; fest am Viewport positionieren
+  (anchor.closest('dialog[open]') ?? document.body).append(menu);
   const r = anchor.getBoundingClientRect();
   const top = r.bottom + 6 + menu.offsetHeight > innerHeight ? r.top - menu.offsetHeight - 6 : r.bottom + 6;
-  menu.style.top = `${Math.max(8, top + scrollY)}px`;
-  menu.style.left = `${Math.max(8, Math.min(r.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8)) + scrollX}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+  menu.style.left = `${Math.max(8, Math.min(r.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+  // Beim Scrollen der Seite/des Dialogs schließen, sonst "schwebt" das Menü vom Button weg
+  const onScroll = () => close();
+  addEventListener('scroll', onScroll, { capture: true, once: true });
   anchor.setAttribute('aria-expanded', 'true');
   document.addEventListener('pointerdown', outside, true);
   document.addEventListener('keydown', esc, true);
-  menu.querySelector('button')?.focus();
+  menu.querySelector('button')?.focus({ preventScroll: true });
 }

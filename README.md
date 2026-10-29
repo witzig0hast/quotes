@@ -19,6 +19,8 @@ Benötigt Node.js ≥ 22.13 (nutzt das eingebaute `node:sqlite`). Daten liegen i
 | `NODE_ENV=production` | Secure-Cookies, HSTS – nur hinter HTTPS betreiben |
 | `TRUST_PROXY` | Anzahl Proxys (z. B. `1`), damit Rate-Limits die echte Client-IP nutzen |
 | `OIDC_*`, `PUBLIC_URL` | SSO, siehe unten |
+| `ADMIN_USERS` | Benutzernamen (kommagetrennt), die immer Admin sind |
+| `WIKIPEDIA` / `WIKIPEDIA_LANG` | `off` schaltet Wikipedia-Auszüge auf Personen-Seiten ab; Sprache (Standard `de`) |
 
 ## Docker
 
@@ -66,6 +68,9 @@ Hinweise:
 - **Folgen & Profile**: Klick auf einen Namen öffnet das Profil (Zitate, Follower, Tags – nur Sichtbares); *Entdecken → Gefolgt* zeigt Zitate der Leute, denen du folgst
 - **Statistik** (*Konto → Statistik*): Anzahl, Herzen, Serie („Tage in Folge“), Zitate pro Monat, meistzitierte Personen und Tags
 - **Erweiterte Suche**: tolerant gegenüber Groß/Klein, Akzenten, ß/ss und Satzzeichen; Filter nach Zeitraum, Person, Tag und (bei eigenen Zitaten) Sichtbarkeit; bei Tippfehlern „Meintest du …?“
+- **Gruppen-Rollen & Einladungen**: Besitzer kann Mitglieder zu **Admins** machen (verwalten Mitglieder, benennen um) und die Gruppe **übertragen**; Besitzer und Admins erstellen **Einladungslinks** (1/7/30 Tage, optional begrenzte Nutzungen, widerrufbar). Wer den Link öffnet, meldet sich an und tritt bei
+- **Korrektur vorschlagen**: bei fremden Zitaten über das ⋯-Menü (Text, Person oder Quelle); der Eigentümer sieht unter *Konto → Vorschläge* „Bisher/Neu“ und übernimmt oder lehnt ab
+- **Melden & Admin-Bereich**: Zitate und Kommentare lassen sich melden (Grund + Anmerkung). Admins (*Konto → Admin-Bereich*) sehen Kennzahlen, prüfen Meldungen (Inhalt löschen oder verwerfen) und verwalten Nutzer (sperren/entsperren, Admin-Rechte). Feste Admins per `ADMIN_USERS=name1,name2`; gesperrte Konten werden sofort abgemeldet und können sich nicht mehr anmelden (auch nicht per SSO)
 - Löschen mit **Rückgängig**, automatisches Nachladen beim Scrollen, Ladeplatzhalter
 - Handy: Navigationsleiste unten mit „+“ in der Mitte; Desktop: Tabs oben
 - Farbschema **System / Hell / Dunkel** umschaltbar; Tastenkürzel `N` (neues Zitat), `/` (Suche), `Strg/⌘ + Enter` (speichern)
