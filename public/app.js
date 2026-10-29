@@ -8,6 +8,7 @@ import { openComments, profileHeader, openStats, openFilters } from './social.js
 import { openGroups, openGroup, renderInvite } from './groups.js';
 import { openSuggest, openSuggestions, openReport, openAdmin } from './moderation.js';
 import { initPwa, clearOfflineData, takeUrlActions, deviceSection, emailSection } from './pwa.js';
+import { passkeyLoginButton, twoFactorForm, openSecurity, openIntegrations } from './security.js';
 
 const SSO_ERRORS = {
   access_denied: 'Anmeldung wurde abgebrochen oder abgelehnt.',
@@ -33,10 +34,7 @@ function renderAuth(mode = 'login', notice = state.authNotice) {
       e.preventDefault();
       btn.disabled = true; err.textContent = '';
       try {
-        const r = await api('POST', isReg ? '/api/register' : '/api/login', { username: user.value, password: pass.value });
-        setUser(r.user, r.csrf);
-        Object.assign(state, { scope: 'feed', q: '', page: 1, group: null });
-        render({ justLoggedIn: true });
+        finishLogin(await api('POST', isReg ? '/api/register' : '/api/login', { username: user.value, password: pass.value }));
       } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
     },
   },
@@ -45,21 +43,34 @@ function renderAuth(mode = 'login', notice = state.authNotice) {
   isReg ? h('div', { class: 'hint' }, 'Mindestens 10 Zeichen.') : null,
   err, btn);
 
+  const card = h('div', { class: 'card' });
+  // Nach Passwort/Passkey: Sitzung übernehmen oder zweiten Faktor abfragen
+  const finishLogin = (r) => {
+    if (r.twoFactor) {
+      card.replaceChildren(twoFactorForm(r.ticket, { onUser: finishLogin, onBack: () => renderAuth('login') }));
+      return;
+    }
+    setUser(r.user, r.csrf);
+    Object.assign(state, { scope: 'feed', q: '', page: 1, group: null });
+    render({ justLoggedIn: true });
+  };
   const { sso, passwordLogin } = state.config;
   const ssoBtn = sso ? h('a', { class: 'btn primary block sso', href: '/api/auth/oidc/login' }, `Mit ${sso.name} anmelden`) : null;
+  const passkeyBtn = isReg ? null : passkeyLoginButton(finishLogin, (msg) => { if (err.isConnected) err.textContent = msg; else toast(msg); });
   const pwBlock = passwordLogin ? [
     h('div', { class: 'tabs', role: 'tablist' },
       h('button', { role: 'tab', 'aria-selected': String(!isReg), onclick: () => renderAuth('login') }, 'Anmelden'),
       h('button', { role: 'tab', 'aria-selected': String(isReg), onclick: () => renderAuth('register') }, 'Registrieren')),
     form] : [];
-  const divider = ssoBtn && passwordLogin ? h('div', { class: 'or' }, h('span', {}, 'oder mit Passwort')) : null;
+  const divider = (ssoBtn || passkeyBtn) && passwordLogin ? h('div', { class: 'or' }, h('span', {}, 'oder mit Passwort')) : null;
 
   $app.replaceChildren(h('main', { class: 'container' }, h('div', { class: 'auth' },
     h('div', { class: 'logo auth-logo' }, h('i', {}, '“'), 'Quotes'),
     h('h1', {}, 'Worte, die bleiben.'),
     h('p', { class: 'lead' }, 'Sammle Zitate von Menschen, die dich inspirieren – privat oder geteilt mit anderen.'),
     notice ? h('p', { class: 'auth-notice' }, notice) : null,
-    h('div', { class: 'card' }, ssoBtn, divider, pwBlock))));
+    card)));
+  card.append(ssoBtn, passkeyBtn, divider, ...pwBlock);
   if (passwordLogin) user.focus();
 }
 
@@ -727,6 +738,8 @@ function openAccount() {
       h('button', { class: 'btn', onclick: () => { dlg.close(); openStats(); } }, icon('chart', { size: 18 }), h('span', {}, 'Statistik')),
       h('button', { class: 'btn', onclick: () => { dlg.close(); state.showProfile?.(state.user.username); } }, icon('user', { size: 18 }), h('span', {}, 'Mein Profil')),
       h('button', { class: 'btn', onclick: () => { dlg.close(); openSuggestions({ onChange: () => state.reload?.() }); } }, icon('edit', { size: 18 }), h('span', {}, 'Vorschläge')),
+      h('button', { class: 'btn', onclick: () => { dlg.close(); openSecurity(); } }, icon('shield', { size: 18 }), h('span', {}, 'Sicherheit')),
+      h('button', { class: 'btn', onclick: () => { dlg.close(); openIntegrations(); } }, icon('plug', { size: 18 }), h('span', {}, 'Integrationen')),
       state.user.isAdmin ? h('button', { class: 'btn primary', onclick: () => { dlg.close(); openAdmin(); } }, icon('sliders', { size: 18 }), h('span', {}, 'Admin-Bereich')) : null),
     nameForm,
     themeSection(),

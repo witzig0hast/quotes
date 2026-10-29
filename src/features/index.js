@@ -11,8 +11,9 @@ import { registerPush } from './push.js';
 import { registerEmail } from './email.js';
 import { registerIntegrations } from './integrations.js';
 import { registerTwoFactor } from './twofactor.js';
+import { registerPasskeys } from './passkeys.js';
 
-const modules = [registerCollections, registerPeople, registerImport, registerSocial, registerStats, registerGroupsExtra, registerSuggestions, registerAdmin, registerPush, registerEmail, registerIntegrations, registerTwoFactor];
+const modules = [registerCollections, registerPeople, registerImport, registerSocial, registerStats, registerGroupsExtra, registerSuggestions, registerAdmin, registerPush, registerEmail, registerIntegrations, registerTwoFactor, registerPasskeys];
 
 export function registerFeatures(app, ctx) {
   for (const register of modules) register(app, ctx);

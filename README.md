@@ -23,6 +23,7 @@ Benötigt Node.js ≥ 22.13 (nutzt das eingebaute `node:sqlite`). Daten liegen i
 | `WIKIPEDIA` / `WIKIPEDIA_LANG` | `off` schaltet Wikipedia-Auszüge auf Personen-Seiten ab; Sprache (Standard `de`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web-Push (Schlüssel per `npm run vapid`; Subject z. B. `mailto:admin@example.com`) |
 | `SMTP_URL` / `MAIL_FROM` | E-Mail-Versand, z. B. `smtps://user:pass@mail.example.com:465`; Absender z. B. `Quotes <quotes@example.com>` |
+| `WEBHOOK_ALLOW_PRIVATE=1` | Webhooks auch an interne Adressen (LAN, z. B. Home-Assistant) erlauben – Standard: nur öffentliche |
 
 ## Docker
 
@@ -76,6 +77,10 @@ Hinweise:
 - **Als App installieren (PWA)**: Startbildschirm-Icon, Vollbild; zuletzt geladene Zitate sind **offline lesbar** (beim Abmelden werden die Offline-Daten vom Gerät gelöscht)
 - **Push-Benachrichtigungen** aufs Handy/den Rechner (*Konto → Dieses Gerät*) – für Markierungen, Kommentare, Gruppen usw.; braucht `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` (`npm run vapid` erzeugt sie). Gesendet wird nur an bekannte Push-Dienste (Google, Mozilla, Apple, Microsoft)
 - **Wochenrückblick per E-Mail** (*Konto → E-Mail & Wochenrückblick*): nur an bestätigte Adressen und nur mit Zustimmung; Abmelden per Link in jeder Mail. Braucht `SMTP_URL` und `PUBLIC_URL`
+- **Passkeys** (*Konto → Sicherheit*): Anmelden mit Fingerabdruck, Gesicht oder Geräte-PIN – ohne Passwort, phishing-sicher. Mehrere Geräte, umbenennbar, entfernbar. Die Domain kommt aus `PUBLIC_URL` (Passkeys sind an sie gebunden – nach einem Domainwechsel neu anlegen)
+- **Zwei-Faktor-Anmeldung (TOTP)** für Passwort-Konten: QR-Code für jede Authenticator-App, 10 einmalige Wiederherstellungscodes (neu erzeugbar). SSO-Konten nutzen die 2FA ihres Anbieters
+- **API-Schlüssel** (*Konto → Integrationen*): `Authorization: Bearer qk_…` für `/api/v1/quotes`, `/api/v1/random`, `/api/v1/daily` (auch `?format=text` für Widgets/Kurzbefehle) und – mit Schreibrecht – `POST /api/v1/quotes`. Übersicht unter `GET /api/v1`
+- **Webhooks**: bei neuem eigenem Zitat oder neuer Benachrichtigung; als signiertes JSON (`X-Quotes-Signature: sha256=<HMAC>`) oder direkt im Slack-/Discord-Format; nach 10 Fehlschlägen automatisch pausiert
 - Löschen mit **Rückgängig**, automatisches Nachladen beim Scrollen, Ladeplatzhalter
 - Handy: Navigationsleiste unten mit „+“ in der Mitte; Desktop: Tabs oben
 - Farbschema **System / Hell / Dunkel** umschaltbar; Tastenkürzel `N` (neues Zitat), `/` (Suche), `Strg/⌘ + Enter` (speichern)
@@ -92,6 +97,11 @@ Hinweise:
 - Markierungen, Freigaben und Gruppen hängen an der Nutzer-ID, nicht am Namen – Umbenennen bricht nichts
 - Benachrichtigungen werden nur angezeigt, solange man das Zitat noch sehen darf bzw. noch Gruppenmitglied ist
 - Freigabe-Links: 192-Bit-Zufallstoken, nur vom Eigentümer erstell-/widerrufbar, Seite mit `noindex`; die öffentliche Ansicht zeigt nur Text, Person, Quelle und Autor (keine Markierungen, Empfänger oder Likes)
+- Sensible Einstellungen (API-Schlüssel, Webhooks, 2FA, Passkeys) verlangen das Passwort bzw. bei SSO-Konten eine Anmeldung von vor höchstens 15 Minuten
+- 2FA: Codes mit Replay-Schutz (jeder Code nur einmal), Login-Zwischenschritt max. 5 Versuche und 5 Minuten; Wiederherstellungscodes nur als Hash gespeichert
+- Passkeys: Challenge einmalig und 5 Minuten gültig, Origin/RP-ID-Prüfung; Schlüssel ohne Nutzer-Verifizierung zählen bei aktivierter 2FA nur als ein Faktor
+- API-Schlüssel nur als Hash gespeichert, Rechte „lesen“ oder „lesen + schreiben“, eigenes Rate-Limit
+- Webhooks: kein Versand an interne/private Adressen (auch nicht per DNS-Umleitung), Zeitlimit, keine Weiterleitungen
 - Gruppen: nur der Besitzer verwaltet Mitglieder; teilen nur mit Gruppen, in denen man Mitglied ist
 
 ## SSO mit authentik (oder jedem OpenID-Connect-Anbieter)

@@ -297,6 +297,16 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   db.exec(`CREATE TABLE IF NOT EXISTS login_tickets (
     ticket_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS passkeys (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    credential_id TEXT NOT NULL UNIQUE, public_key BLOB NOT NULL, counter INTEGER NOT NULL DEFAULT 0,
+    transports TEXT, name TEXT NOT NULL, backed_up INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL, last_used_at INTEGER)`);
+  db.exec('CREATE INDEX IF NOT EXISTS passkeys_user ON passkeys(user_id)');
+  db.exec(`CREATE TABLE IF NOT EXISTS webauthn_flows (
+    flow_hash TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, challenge TEXT NOT NULL, rp_id TEXT NOT NULL, origin TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
+  if (!hasColumn('users', 'webauthn_id')) db.exec('ALTER TABLE users ADD COLUMN webauthn_id TEXT');
   if (!hasColumn('users', 'is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
   if (!hasColumn('users', 'disabled')) db.exec('ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0');
   // Gruppen-Rollen: alte Tabelle erlaubte nur owner/member -> um "admin" erweitern (verlustfrei)
