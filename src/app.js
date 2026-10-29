@@ -211,6 +211,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       const ok = await verifyPassword(password, row ? row.password_hash : DUMMY_HASH);
       if (!row || !ok) throw new HttpError(401, 'Benutzername oder Passwort falsch.');
       if (row.disabled) throw new HttpError(403, 'Dieses Konto wurde gesperrt.');
+      // Zwei-Faktor aktiv? Dann noch keine Sitzung – erst nach dem Code (POST /api/login/2fa)
+      if (featureCtx.twoFactorRequired?.(row.id)) return res.json({ twoFactor: true, ticket: featureCtx.createLoginTicket(row.id) });
       if (req.sessionToken) destroySession(db, req.sessionToken);
       sendSession(res, userInfo(row.id), createSession(db, row.id));
     } catch (e) { next(e); }
@@ -845,6 +847,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     ACCESS, FOR_ME, BASE, shape, getOne, idParam, memberRole, notify, userInfo,
     resolveUsers, resolveGroups, saveRelations, validateQuote, usernameList, normTag, insertQuote, requireOwnQuote,
     groupDetails, groupGid, isManager, MAX_MEMBERS,
+    sendSession, createSession: (uid) => createSession(db, uid), destroySession: (t) => destroySession(db, t),
     onNotify: (fn) => notifyHooks.push(fn), onQuoteCreated: (fn) => quoteHooks.push(fn), confirmIdentity, pushSender, webhookSender, mailer, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null,
   });
   registerFeatures(app, featureCtx);

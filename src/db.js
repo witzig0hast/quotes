@@ -290,6 +290,13 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     ['email_token_expires', 'INTEGER'], ['digest', 'INTEGER NOT NULL DEFAULT 0'], ['last_digest_at', 'INTEGER']]) {
     if (!hasColumn('users', col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} ${def}`);
   }
+  // Zwei-Faktor (TOTP) + Wiederherstellungscodes (nur Hashes)
+  for (const [col, def] of [['totp_secret', 'TEXT'], ['totp_enabled', 'INTEGER NOT NULL DEFAULT 0'], ['totp_last_step', 'INTEGER NOT NULL DEFAULT 0'], ['recovery_codes', 'TEXT']]) {
+    if (!hasColumn('users', col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} ${def}`);
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS login_tickets (
+    ticket_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)`);
   if (!hasColumn('users', 'is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
   if (!hasColumn('users', 'disabled')) db.exec('ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0');
   // Gruppen-Rollen: alte Tabelle erlaubte nur owner/member -> um "admin" erweitern (verlustfrei)

@@ -11,7 +11,7 @@
     "start": "node src/server.js",
     "vapid": "node -e \"const k=require('web-push').generateVAPIDKeys();console.log('VAPID_PUBLIC_KEY='+k.publicKey+'\\nVAPID_PRIVATE_KEY='+k.privateKey)\"",
     "dev": "node --watch src/server.js",
-    "test": "node --test --test-force-exit test/api.test.js test/oidc.test.js test/features.test.js test/caching.test.js test/collections-people.test.js test/import.test.js test/social-stats.test.js test/moderation.test.js test/push-email.test.js test/integrations.test.js"
+    "test": "node --test --test-force-exit test/api.test.js test/oidc.test.js test/features.test.js test/caching.test.js test/collections-people.test.js test/import.test.js test/social-stats.test.js test/moderation.test.js test/push-email.test.js test/integrations.test.js test/twofactor.test.js"
   },
   "dependencies": {
     "express": "^4.22.3",
@@ -19,6 +19,7 @@
     "helmet": "^8.3.0",
     "jose": "^6.2.12",
     "nodemailer": "^10.3.0",
+    "qrcode": "^1.5.4",
     "web-push": "^3.6.7"
   }
 }
