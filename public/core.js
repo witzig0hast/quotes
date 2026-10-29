@@ -6,6 +6,9 @@ for (const method of ['replaceChildren', 'append']) {
   const original = Element.prototype[method];
   Element.prototype[method] = function (...nodes) { return original.apply(this, nodes.filter((n) => n != null && n !== false)); };
 }
+import { t, tErr, LANG, LOCALE, langName, hasLangChoice, setLang } from './i18n.js';
+
+export { t, LANG, LOCALE, langName };
 export const $app = document.getElementById('app');
 export const $toast = document.getElementById('toast');
 export const state = {
@@ -82,8 +85,8 @@ export function toast(msg, { action, onAction, ms = 2600 } = {}) {
 
 // Farbschema: System (Standard), hell oder dunkel – nur eine Komfort-Einstellung pro Browser
 export const THEME_KEY = 'quotes-theme';
-export function applyTheme(t) {
-  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+export function applyTheme(theme) {
+  if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
 }
 export function getTheme() { try { return localStorage.getItem(THEME_KEY) || 'system'; } catch { return 'system'; } }
@@ -99,8 +102,8 @@ export function checkVersion(res) {
   if (!APP_VERSION || !server || server === APP_VERSION || updateShown || !navigator.onLine) return;
   updateShown = true;
   document.body.append(h('div', { class: 'update-bar', role: 'status' },
-    h('span', {}, 'Neue Version verfügbar'),
-    h('button', { class: 'btn sm primary', onclick: () => location.reload() }, 'Neu laden')));
+    h('span', {}, t('Neue Version verfügbar')),
+    h('button', { class: 'btn sm primary', onclick: () => location.reload() }, t('Neu laden'))));
 }
 
 export async function api(method, url, body) {
@@ -117,20 +120,22 @@ export async function api(method, url, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && state.user) { setUser(null); state.onUnauthorized?.(); }
-    throw new Error(data.error || 'Etwas ist schiefgelaufen.');
+    throw new Error(data.error ? tErr(data.error) : t('Etwas ist schiefgelaufen.'));
   }
   return data;
 }
 
-export const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-export const fmtDate = (t) => new Date(t).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' });
-export function relTime(t) {
-  const s = Math.round((Date.now() - t) / 1000);
-  if (s < 60) return 'gerade eben';
-  if (s < 3600) return `vor ${Math.floor(s / 60)} Min.`;
-  if (s < 86400) return `vor ${Math.floor(s / 3600)} Std.`;
-  if (s < 7 * 86400) return `vor ${plural(Math.floor(s / 86400), 'Tag', 'Tagen')}`;
-  return fmtDate(t);
+// Englisch: Substantive in Zählungen klein („3 quotes“), Deutsch bleibt groß („3 Zitate“)
+export const plural = (n, one, many) => { const w = n === 1 ? one : many; return `${n.toLocaleString(LOCALE)} ${LANG === 'en' ? w.toLowerCase() : w}`; };
+export const fmtDate = (ts) => new Date(ts).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
+const rtf = new Intl.RelativeTimeFormat(LOCALE, { numeric: 'auto', style: 'short' });
+export function relTime(ts) {
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 60) return t('gerade eben');
+  if (s < 3600) return rtf.format(-Math.floor(s / 60), 'minute');
+  if (s < 86400) return rtf.format(-Math.floor(s / 3600), 'hour');
+  if (s < 7 * 86400) return rtf.format(-Math.floor(s / 86400), 'day');
+  return fmtDate(ts);
 }
 
 export function modal(...kids) {
@@ -142,7 +147,7 @@ export function modal(...kids) {
 }
 
 /** Eingabefeld für mehrere Werte mit Vorschlägen: @Benutzernamen (Standard) oder #Tags. */
-export function chipInput({ initial = [], placeholder = '@benutzername', id, prefix = '@', suggest } = {}) {
+export function chipInput({ initial = [], placeholder = t('@benutzername'), id, prefix = '@', suggest } = {}) {
   let values = [...initial];
   const strip = (v) => (prefix === '#' ? v.trim().replace(/^#+/, '').toLowerCase() : v.trim().replace(/^@/, ''));
   const fetchSuggest = suggest ?? (async (q) => (await api('GET', `/api/users?q=${encodeURIComponent(q)}`)).users);
@@ -151,7 +156,7 @@ export function chipInput({ initial = [], placeholder = '@benutzername', id, pre
   const list = h('div', { class: 'suggest', role: 'listbox', hidden: true });
   const has = (v) => values.some((x) => x.toLowerCase() === v.toLowerCase());
   const renderChips = () => chips.replaceChildren(...values.map((v) => h('span', { class: 'chip' }, `${prefix}${v}`,
-    h('button', { type: 'button', 'aria-label': `${prefix}${v} entfernen`, onclick: () => { values = values.filter((x) => x !== v); renderChips(); } }, '×'))));
+    h('button', { type: 'button', 'aria-label': t('{0} entfernen', `${prefix}${v}`), onclick: () => { values = values.filter((x) => x !== v); renderChips(); } }, '×'))));
   const add = (raw) => {
     const v = strip(raw);
     if (v && !has(v)) values.push(v);
@@ -190,9 +195,24 @@ export function chipInput({ initial = [], placeholder = '@benutzername', id, pre
 export function setUser(user, csrf = null) {
   state.user = user; state.csrf = user ? csrf : null; state.unread = 0;
   clearInterval(state.notifTimer); state.notifTimer = null;
+  if (user) syncLang(user);
 }
 
-export const VIS = { private: 'Privat', shared: 'Geteilt', public: 'Öffentlich' };
+/** Sprache zwischen Geräten abgleichen: Konto-Sprache übernehmen, sonst die hier gewählte ans Konto melden. */
+function syncLang(user) {
+  if (user.lang && user.lang !== LANG && !hasLangChoice()) { setLang(user.lang); return; }
+  if (user.lang !== LANG) api('PUT', '/api/me/lang', { lang: LANG }).catch(() => {});
+}
+
+export const VIS = { private: t('Privat'), shared: t('Geteilt'), public: t('Öffentlich') };
+/** Zitattext (mit lang-Attribut für Vorlesefunktionen) und – falls vorhanden – die Übersetzung darunter. */
+export function quoteText(q, attrs = {}) {
+  return [
+    h('blockquote', { ...attrs, lang: q.lang || null }, q.text),
+    q.translation ? h('p', { class: 'translation' },
+      h('span', { class: 'tr-label' }, q.lang ? t('Übersetzung · Original: {0}', langName(q.lang)) : t('Übersetzung')), q.translation) : null,
+  ];
+}
 export const quoteAsText = (q) => `„${q.text}“ — ${q.person}${q.source ? `, ${q.source}` : ''}`;
 
 export function avatar(name) {

@@ -81,6 +81,8 @@ Hinweise:
 - **Zwei-Faktor-Anmeldung (TOTP)** für Passwort-Konten: QR-Code für jede Authenticator-App, 10 einmalige Wiederherstellungscodes (neu erzeugbar). SSO-Konten nutzen die 2FA ihres Anbieters
 - **API-Schlüssel** (*Konto → Integrationen*): `Authorization: Bearer qk_…` für `/api/v1/quotes`, `/api/v1/random`, `/api/v1/daily` (auch `?format=text` für Widgets/Kurzbefehle) und – mit Schreibrecht – `POST /api/v1/quotes`. Übersicht unter `GET /api/v1`
 - **Webhooks**: bei neuem eigenem Zitat oder neuer Benachrichtigung; als signiertes JSON (`X-Quotes-Signature: sha256=<HMAC>`) oder direkt im Slack-/Discord-Format; nach 10 Fehlschlägen automatisch pausiert
+- **Deutsch & Englisch**: Sprache folgt dem Browser, umschaltbar unter *Konto → Darstellung* oder auf der Anmeldeseite; die Wahl wird am Konto gespeichert (gilt auf allen Geräten sowie für Push-Nachrichten und E-Mails). Datumsangaben im passenden Format. Neue Texte: deutsch im Code, englisch in `public/i18n-en.js` – ein Test meldet fehlende Übersetzungen
+- **Originalsprache & Übersetzung** pro Zitat (optional, im Editor unter „Originalsprache & Übersetzung“): die Übersetzung steht unter dem Original, wird mit durchsucht und ist in Export/Import (`lang`, `translation`) und API enthalten
 - Löschen mit **Rückgängig**, automatisches Nachladen beim Scrollen, Ladeplatzhalter
 - Handy: Navigationsleiste unten mit „+“ in der Mitte; Desktop: Tabs oben
 - Farbschema **System / Hell / Dunkel** umschaltbar; Tastenkürzel `N` (neues Zitat), `/` (Suche), `Strg/⌘ + Enter` (speichern)

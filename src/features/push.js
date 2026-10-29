@@ -2,6 +2,7 @@
 // Aktiv, wenn VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY gesetzt sind (Schlüssel erzeugen: npm run vapid).
 import webpush from 'web-push';
 import { bad, handler } from '../util.js';
+import { tr } from '../i18n.js';
 
 // Nur an bekannte Push-Dienste senden – sonst könnte man den Server Anfragen an beliebige Adressen schicken lassen (SSRF)
 const ALLOWED_HOSTS = [
@@ -53,12 +54,12 @@ export function registerPush(app, ctx) {
 
   // Kurze Texte für die Benachrichtigung auf dem Sperrbildschirm
   const TEXT = {
-    mention: (a) => `@${a} hat dich in einem Zitat markiert`, share: (a) => `@${a} hat ein Zitat mit dir geteilt`,
-    group_add: (a, g) => `@${a} hat dich zur Gruppe „${g}“ hinzugefügt`, comment: (a) => `@${a} hat dein Zitat kommentiert`,
-    comment_mention: (a) => `@${a} hat dich in einem Kommentar erwähnt`, follow: (a) => `@${a} folgt dir jetzt`,
-    group_owner: (a, g) => `@${a} hat dir die Gruppe „${g}“ übertragen`, group_join: (a, g) => `@${a} ist „${g}“ beigetreten`,
-    suggestion: (a) => `@${a} schlägt eine Korrektur vor`, suggestion_accepted: (a) => `@${a} hat deine Korrektur übernommen`,
-    suggestion_rejected: (a) => `@${a} hat deine Korrektur nicht übernommen`,
+    mention: '@{0} hat dich in einem Zitat markiert', share: '@{0} hat ein Zitat mit dir geteilt',
+    group_add: '@{0} hat dich zur Gruppe „{1}“ hinzugefügt', comment: '@{0} hat dein Zitat kommentiert',
+    comment_mention: '@{0} hat dich in einem Kommentar erwähnt', follow: '@{0} folgt dir jetzt',
+    group_owner: '@{0} hat dir die Gruppe „{1}“ übertragen', group_join: '@{0} ist „{1}“ beigetreten',
+    suggestion: '@{0} schlägt eine Korrektur vor', suggestion_accepted: '@{0} hat deine Korrektur übernommen',
+    suggestion_rejected: '@{0} hat deine Korrektur nicht übernommen',
   };
 
   const deliver = async (uid, payload) => {
@@ -77,10 +78,11 @@ export function registerPush(app, ctx) {
 
   onNotify((uid, type, actorId, { quoteId, groupId }) => {
     if (!send) return;
-    const actor = db.prepare('SELECT username FROM users WHERE id = ?').get(actorId)?.username ?? 'Jemand';
+    const lang = db.prepare('SELECT lang FROM users WHERE id = ?').get(uid)?.lang;
+    const actor = db.prepare('SELECT username FROM users WHERE id = ?').get(actorId)?.username ?? tr(lang, 'Jemand');
     const group = groupId ? db.prepare('SELECT name FROM user_groups WHERE id = ?').get(groupId)?.name ?? '' : '';
     const quote = quoteId ? db.prepare('SELECT text, person FROM quotes WHERE id = ?').get(quoteId) : null;
-    const title = (TEXT[type] ?? ((a) => `Neues von @${a}`))(actor, group);
+    const title = tr(lang, TEXT[type] ?? 'Neues von @{0}', actor, group);
     const body = quote ? `„${quote.text.slice(0, 120)}${quote.text.length > 120 ? '…' : ''}“ — ${quote.person}` : '';
     deliver(uid, { title, body, url: '/?notifications=1', tag: `${type}-${quoteId ?? groupId ?? actorId}` }).catch(() => {});
   });
@@ -88,7 +90,7 @@ export function registerPush(app, ctx) {
   // Test-Benachrichtigung an die eigenen Geräte
   app.post('/api/push/test', requireAuth, writeLimiter, handler(async (req, res) => {
     if (!send) throw bad('Push ist auf diesem Server nicht eingerichtet.');
-    await deliver(req.user.id, { title: 'Quotes', body: 'So sehen Benachrichtigungen aus ✓', url: '/' });
+    await deliver(req.user.id, { title: 'Quotes', body: tr(req.user.lang, 'So sehen Benachrichtigungen aus ✓'), url: '/' });
     res.json({ ok: true });
   }));
 }

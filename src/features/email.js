@@ -3,6 +3,7 @@
 import { randomBytes, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import { bad, clean, handler, escapeHtml } from '../util.js';
+import { tr } from '../i18n.js';
 
 const DAY = 86_400_000;
 const sha256 = (s) => createHash('sha256').update(s).digest('hex');
@@ -22,7 +23,7 @@ export function registerEmail(app, ctx) {
   const unsubToken = (uid) => createHmac('sha256', secret).update(`digest:${uid}`).digest('base64url');
 
   const send = (to, subject, text, html) => mailer.sendMail({ from, to, subject, text, html });
-  const layout = (title, inner) => `<!doctype html><html lang="de"><body style="margin:0;background:#f5f5f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0a0a0a">
+  const layout = (title, inner, lang = 'de') => `<!doctype html><html lang="${lang === 'en' ? 'en' : 'de'}"><body style="margin:0;background:#f5f5f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0a0a0a">
 <div style="max-width:560px;margin:0 auto;padding:32px 20px"><div style="font-family:Georgia,serif;font-size:22px;font-weight:700;margin-bottom:20px">“ Quotes</div>
 <div style="background:#fff;border:1px solid #e3e3e3;border-radius:14px;padding:24px"><h1 style="font-family:Georgia,serif;font-size:24px;margin:0 0 16px">${escapeHtml(title)}</h1>${inner}</div></div></body></html>`;
   const button = (href, label) => `<p style="margin:24px 0 8px"><a href="${escapeHtml(href)}" style="background:#0a0a0a;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:600;display:inline-block">${escapeHtml(label)}</a></p>`;
@@ -45,9 +46,11 @@ export function registerEmail(app, ctx) {
     db.prepare('UPDATE users SET email = ?, email_verified = 0, email_token_hash = ?, email_token_expires = ? WHERE id = ?')
       .run(email, sha256(token), Date.now() + DAY, req.user.id);
     const link = `${publicUrl}/api/email/verify?token=${token}`;
-    await send(email, 'Bitte bestätige deine E-Mail-Adresse',
-      `Hallo @${req.user.username},\n\nbitte bestätige deine Adresse für Quotes:\n${link}\n\nDer Link ist 24 Stunden gültig. Wenn du das nicht warst, ignoriere diese Mail.`,
-      layout('E-Mail bestätigen', `<p>Hallo @${escapeHtml(req.user.username)},</p><p>bitte bestätige deine Adresse für Quotes.</p>${button(link, 'Adresse bestätigen')}<p style="color:#6f6f6f;font-size:13px">Der Link ist 24 Stunden gültig. Wenn du das nicht warst, ignoriere diese Mail.</p>`));
+    const L = req.user.lang;
+    const valid = tr(L, 'Der Link ist 24 Stunden gültig. Wenn du das nicht warst, ignoriere diese Mail.');
+    await send(email, tr(L, 'Bitte bestätige deine E-Mail-Adresse'),
+      `${tr(L, 'Hallo @{0},', req.user.username)}\n\n${tr(L, 'bitte bestätige deine Adresse für Quotes:')}\n${link}\n\n${valid}`,
+      layout(tr(L, 'E-Mail bestätigen'), `<p>${escapeHtml(tr(L, 'Hallo @{0},', req.user.username))}</p><p>${escapeHtml(tr(L, 'bitte bestätige deine Adresse für Quotes.'))}</p>${button(link, tr(L, 'Adresse bestätigen'))}<p style="color:#6f6f6f;font-size:13px">${escapeHtml(valid)}</p>`, L));
     res.json({ email, verified: false, digest: !!db.prepare('SELECT digest FROM users WHERE id = ?').get(req.user.id).digest });
   }));
 
@@ -81,7 +84,7 @@ export function registerEmail(app, ctx) {
   /** Wochenrückblick an alle fälligen Nutzer senden (stündlich vom Server aufgerufen). */
   ctx.runDigest = async (now = Date.now()) => {
     if (!enabled) return { sent: 0 };
-    const due = db.prepare(`SELECT id, username, email FROM users WHERE digest = 1 AND email_verified = 1 AND disabled = 0
+    const due = db.prepare(`SELECT id, username, email, lang FROM users WHERE digest = 1 AND email_verified = 1 AND disabled = 0
                             AND email IS NOT NULL AND (last_digest_at IS NULL OR last_digest_at <= ?)`).all(now - 7 * DAY + 3600_000);
     let sent = 0;
     for (const u of due) {
@@ -100,21 +103,23 @@ export function registerEmail(app, ctx) {
       if (!unread.length && !followed.length && !top) continue; // nichts zu berichten -> keine Mail
       const unsub = `${publicUrl}/api/digest/unsubscribe?u=${u.id}&t=${unsubToken(u.id)}`;
       const quoteHtml = (q) => `<blockquote style="margin:12px 0;padding:4px 0 4px 14px;border-left:3px solid #0a0a0a;font-family:Georgia,serif;font-size:17px">„${escapeHtml(q.text)}“<br><span style="font-family:-apple-system,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">— ${escapeHtml(q.person)}</span></blockquote>`;
-      const parts = [], text = [`Hallo @${u.username}, dein Wochenrückblick:`];
+      const L = u.lang;
+      const parts = [], text = [tr(L, 'Hallo @{0}, dein Wochenrückblick:', u.username)];
       if (unread.length) {
-        parts.push(`<p><b>${unread.length} ungelesene Benachrichtigung${unread.length === 1 ? '' : 'en'}</b> – u. a. von ${escapeHtml([...new Set(unread.map((x) => `@${x.actor}`))].slice(0, 3).join(', '))}.</p>`);
-        text.push(`${unread.length} ungelesene Benachrichtigungen.`);
+        const count = tr(L, unread.length === 1 ? '{0} ungelesene Benachrichtigung' : '{0} ungelesene Benachrichtigungen', unread.length);
+        parts.push(`<p><b>${escapeHtml(count)}</b>${escapeHtml(tr(L, ' – u. a. von {0}.', [...new Set(unread.map((x) => `@${x.actor}`))].slice(0, 3).join(', ')))}</p>`);
+        text.push(`${count}.`);
       }
       if (followed.length) {
-        parts.push(`<p><b>Neu von Leuten, denen du folgst</b></p>${followed.map(quoteHtml).join('')}`);
-        text.push('Neu von Leuten, denen du folgst:', ...followed.map((q) => `„${q.text}“ — ${q.person} (@${q.author})`));
+        parts.push(`<p><b>${escapeHtml(tr(L, 'Neu von Leuten, denen du folgst'))}</b></p>${followed.map(quoteHtml).join('')}`);
+        text.push(`${tr(L, 'Neu von Leuten, denen du folgst')}:`, ...followed.map((q) => `„${q.text}“ — ${q.person} (@${q.author})`));
       }
-      if (top) { parts.push(`<p><b>Zitat der Woche</b></p>${quoteHtml(top)}`); text.push(`Zitat der Woche: „${top.text}“ — ${top.person}`); }
-      text.push('', `Öffnen: ${publicUrl}/`, `Abmelden: ${unsub}`);
+      if (top) { parts.push(`<p><b>${escapeHtml(tr(L, 'Zitat der Woche'))}</b></p>${quoteHtml(top)}`); text.push(`${tr(L, 'Zitat der Woche')}: „${top.text}“ — ${top.person}`); }
+      text.push('', `${tr(L, 'Öffnen')}: ${publicUrl}/`, `${tr(L, 'Abmelden')}: ${unsub}`);
       try {
-        await send(u.email, 'Dein Wochenrückblick bei Quotes', text.join('\n'),
-          layout(`Hallo @${u.username}`, parts.join('') + button(`${publicUrl}/`, 'Quotes öffnen')
-            + `<p style="color:#6f6f6f;font-size:12px;margin-top:24px">Du bekommst diese Mail, weil du den Wochenrückblick aktiviert hast. <a href="${escapeHtml(unsub)}" style="color:#6f6f6f">Abmelden</a></p>`));
+        await send(u.email, tr(L, 'Dein Wochenrückblick bei Quotes'), text.join('\n'),
+          layout(tr(L, 'Hallo @{0}', u.username), parts.join('') + button(`${publicUrl}/`, tr(L, 'Quotes öffnen'))
+            + `<p style="color:#6f6f6f;font-size:12px;margin-top:24px">${escapeHtml(tr(L, 'Du bekommst diese Mail, weil du den Wochenrückblick aktiviert hast.'))} <a href="${escapeHtml(unsub)}" style="color:#6f6f6f">${escapeHtml(tr(L, 'Abmelden'))}</a></p>`, L));
         sent++;
       } catch (e) { console.warn('[digest]', e.message); }
     }

@@ -35,7 +35,7 @@ export function createSession(db, userId) {
 export function getSession(db, token) {
   if (!token || typeof token !== 'string' || token.length > 100) return null;
   const row = db.prepare(`
-    SELECT s.csrf, s.expires_at, u.id, u.username
+    SELECT s.csrf, s.expires_at, u.id, u.username, u.lang
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND u.disabled = 0`).get(sha256(token)); // gesperrte Konten: Sitzung sofort ungültig
   if (!row) return null;
@@ -43,7 +43,7 @@ export function getSession(db, token) {
     destroySession(db, token);
     return null;
   }
-  return { csrf: row.csrf, createdAt: row.expires_at - SESSION_TTL_MS, user: { id: row.id, username: row.username } };
+  return { csrf: row.csrf, createdAt: row.expires_at - SESSION_TTL_MS, user: { id: row.id, username: row.username, lang: row.lang } };
 }
 
 export function destroySession(db, token) {

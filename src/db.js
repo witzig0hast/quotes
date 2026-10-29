@@ -306,6 +306,9 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   db.exec(`CREATE TABLE IF NOT EXISTS webauthn_flows (
     flow_hash TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     kind TEXT NOT NULL, challenge TEXT NOT NULL, rp_id TEXT NOT NULL, origin TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
+  if (!hasColumn('users', 'lang')) db.exec('ALTER TABLE users ADD COLUMN lang TEXT');
+  if (!hasColumn('quotes', 'lang')) db.exec('ALTER TABLE quotes ADD COLUMN lang TEXT');
+  if (!hasColumn('quotes', 'translation')) db.exec('ALTER TABLE quotes ADD COLUMN translation TEXT');
   if (!hasColumn('users', 'webauthn_id')) db.exec('ALTER TABLE users ADD COLUMN webauthn_id TEXT');
   if (!hasColumn('users', 'is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
   if (!hasColumn('users', 'disabled')) db.exec('ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0');

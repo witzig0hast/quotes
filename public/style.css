@@ -662,3 +662,15 @@ input[type=email]:focus { border-color: var(--fg); outline: none; }
 .api-docs ul { padding-left: 1.2em; line-height: 1.7; }
 .api-docs code { font-size: .85em; }
 @media (max-width: 420px) { .recovery-codes { columns: 1; } }
+
+/* ---------- Etappe F: Sprachen & Übersetzungen ---------- */
+.translation { margin: 4px 0 12px; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); font-size: .95rem; line-height: 1.5; }
+.translation .tr-label { display: block; font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 2px; }
+.daily .translation { color: inherit; opacity: .75; border-left-color: currentColor; }
+.lang-box { margin: 14px 0 4px; border: 1px solid var(--line); border-radius: 12px; padding: 0 14px; }
+.lang-box summary { cursor: pointer; padding: 12px 0; font-weight: 600; font-size: .92rem; }
+.lang-box[open] { padding-bottom: 12px; }
+.lang-box textarea { width: 100%; }
+.sub-label { margin-top: 14px !important; }
+.lang-switch { text-align: center; margin: 18px 0 0; }
+.lang-switch .link-btn { color: var(--muted); font-size: .9rem; }

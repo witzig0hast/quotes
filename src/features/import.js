@@ -33,7 +33,7 @@ export function parseCsv(text) {
 // Spaltennamen (deutsch/englisch) -> Feld
 const COLUMNS = {
   text: ['text', 'zitat', 'quote'], person: ['person', 'autor', 'author', 'von', 'name'], source: ['source', 'quelle'],
-  tags: ['tags', 'tag', 'schlagwörter', 'schlagworte'], visibility: ['visibility', 'sichtbarkeit'], createdAt: ['createdat', 'created_at', 'datum', 'date'],
+  tags: ['tags', 'tag', 'schlagwörter', 'schlagworte'], visibility: ['visibility', 'sichtbarkeit'], lang: ['lang', 'sprache', 'language'], translation: ['translation', 'übersetzung', 'uebersetzung'], createdAt: ['createdat', 'created_at', 'datum', 'date'],
 };
 // Unser Export entschärft Formeln mit einem führenden ' – beim Import wieder entfernen
 const unguard = (s) => (/^'[=+\-@\t\r]/.test(s) ? s.slice(1) : s);
@@ -47,7 +47,7 @@ function rowsFromCsv(content) {
   if (col.text < 0 || col.person < 0) throw bad('Die CSV-Datei braucht mindestens die Spalten „text“ (oder „Zitat“) und „person“.');
   return rows.slice(1).map((r) => {
     const get = (k) => (col[k] >= 0 ? unguard(r[col[k]] ?? '') : '');
-    return { text: get('text'), person: get('person'), source: get('source'), tags: splitTags(get('tags')), visibility: get('visibility'), createdAt: get('createdAt') };
+    return { text: get('text'), person: get('person'), source: get('source'), lang: get('lang'), translation: get('translation'), tags: splitTags(get('tags')), visibility: get('visibility'), createdAt: get('createdAt') };
   });
 }
 
@@ -56,7 +56,7 @@ function rowsFromJson(content) {
   try { data = JSON.parse(content); } catch { throw bad('Die JSON-Datei ist ungültig.'); }
   const list = Array.isArray(data) ? data : data?.quotes;
   if (!Array.isArray(list)) throw bad('Erwartet wird eine Liste von Zitaten oder unser Export-Format ({ "quotes": [...] }).');
-  return list.map((q) => ({ text: q?.text, person: q?.person, source: q?.source ?? '', tags: splitTags(q?.tags), visibility: q?.visibility, createdAt: q?.createdAt }));
+  return list.map((q) => ({ text: q?.text, person: q?.person, source: q?.source ?? '', lang: q?.lang, translation: q?.translation, tags: splitTags(q?.tags), visibility: q?.visibility, createdAt: q?.createdAt }));
 }
 
 export function registerImport(app, ctx) {
@@ -76,7 +76,7 @@ export function registerImport(app, ctx) {
         try {
           // "shared" würde Empfänger voraussetzen -> beim Import privat; ohne Angabe ebenfalls privat
           const visibility = r.visibility === 'public' ? 'public' : 'private';
-          const v = validateQuote({ text: r.text, person: r.person, source: r.source ?? '', tags: r.tags.slice(0, 10), visibility });
+          const v = validateQuote({ text: r.text, person: r.person, source: r.source ?? '', lang: r.lang ?? '', translation: r.translation ?? '', tags: r.tags.slice(0, 10), visibility });
           const norm = normText(v.text);
           if (existing.has(norm)) { result.skipped++; return; }
           const created = Date.parse(r.createdAt);

@@ -12,6 +12,7 @@ import { OidcError } from './oidc.js';
 import { createAssets, NO_STORE } from './assets.js';
 import { HttpError, bad, clean, escapeLike, placeholders, groupBy, normText, editDistance } from './util.js';
 import { registerFeatures } from './features/index.js';
+import { LANGS } from './i18n.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const PAGE_SIZE = 20;
@@ -46,6 +47,11 @@ function validateQuote(body) {
   if (person.length > 100) throw bad('Der Name ist zu lang (max. 100 Zeichen).');
   if (source.length > 150) throw bad('Die Quelle ist zu lang (max. 150 Zeichen).');
   if (!VISIBILITIES.includes(visibility)) throw bad('Ungültige Sichtbarkeit.');
+  // Originalsprache (ISO 639-1, optional) und Übersetzung (optional)
+  const lang = typeof body.lang === 'string' ? body.lang.trim().toLowerCase() : '';
+  if (lang && !/^[a-z]{2}$/.test(lang)) throw bad('Ungültige Sprache.');
+  const translation = clean(body.translation, 1000);
+  if (translation.length > 1000) throw bad('Die Übersetzung ist zu lang (max. 1000 Zeichen).');
   const mentions = usernameList(body.mentions, 'Markierungen');
   if (mentions.length > MAX_MENTIONS) throw bad(`Höchstens ${MAX_MENTIONS} Personen markieren.`);
   let shareWith = [], shareGroups = [];
@@ -58,7 +64,7 @@ function validateQuote(body) {
   if (body.tags !== undefined && !Array.isArray(body.tags)) throw bad('Ungültige Tag-Liste.');
   const tags = [...new Set((body.tags ?? []).filter((t) => String(t).trim()).map(normTag))];
   if (tags.length > MAX_TAGS) throw bad(`Höchstens ${MAX_TAGS} Tags pro Zitat.`);
-  return { text, person, source, visibility, shareWith, shareGroups, mentions, tags };
+  return { text, person, source, visibility, shareWith, shareGroups, mentions, tags, lang: lang || null, translation: translation || null };
 }
 
 const BIND_COOKIE = 'oidc_bind';
@@ -147,10 +153,10 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
 
   /** Einheitliche Nutzerdaten für Login, Registrierung und /api/me. */
   const userInfo = (id) => {
-    const row = db.prepare('SELECT id, username, password_hash, username_set FROM users WHERE id = ?').get(id);
+    const row = db.prepare('SELECT id, username, password_hash, username_set, lang FROM users WHERE id = ?').get(id);
     const ssoLinked = !!oidc && !!db.prepare('SELECT 1 FROM identities WHERE user_id = ? AND issuer = ?').get(id, oidc.issuer);
     return { id: row.id, username: row.username, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set, ssoLinked,
-      isAdmin: !!featureCtx.isAdmin?.(row.id) };
+      isAdmin: !!featureCtx.isAdmin?.(row.id), lang: row.lang ?? null };
   };
 
   /**
@@ -387,7 +393,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
                 WHERE qg.quote_id = q.id AND gm.user_id = @me))))`;
   const ACCESS = `(q.user_id = @me OR q.visibility = 'public' OR ${FOR_ME})`;
   const BASE = `
-    SELECT q.id, q.text, q.person, q.source, q.visibility, q.share_token AS shareToken, q.created_at AS createdAt,
+    SELECT q.id, q.text, q.person, q.source, q.lang, q.translation, q.visibility, q.share_token AS shareToken, q.created_at AS createdAt,
            u.username AS author, (q.user_id = @me) AS mine,
            (SELECT COUNT(*) FROM likes l WHERE l.quote_id = q.id) AS likes,
            EXISTS(SELECT 1 FROM likes l WHERE l.quote_id = q.id AND l.user_id = @me) AS liked,
@@ -407,7 +413,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     const groups = own.length ? groupBy(db.prepare(`SELECT qg.quote_id, g.id, g.name FROM quote_groups qg JOIN user_groups g ON g.id = qg.group_id
       WHERE qg.quote_id IN (${placeholders(own)}) ORDER BY g.name`).all(...own), 'quote_id', (r) => ({ id: r.id, name: r.name })) : new Map();
     return rows.map((r) => ({
-      id: r.id, text: r.text, person: r.person, source: r.source, createdAt: r.createdAt, author: r.author,
+      id: r.id, text: r.text, person: r.person, source: r.source, lang: r.lang ?? null, translation: r.translation ?? null, createdAt: r.createdAt, author: r.author,
       mine: !!r.mine, likes: r.likes, liked: !!r.liked, comments: r.comments ?? 0, mentions: mentions.get(r.id) ?? [],
       tags: tags.get(r.id) ?? [],
       // Nur für den Eigentümer: Sichtbarkeit, Empfänger, Gruppen, Freigabe-Link
@@ -482,7 +488,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
         const raw = q.toLowerCase().startsWith('#') ? q.slice(1) : q;
         const norm = normText(raw); // leer z. B. bei "%" -> dann nur wörtlich suchen
         where.push(`(q.text LIKE @q ESCAPE '\\'${norm ? ` OR q.text_norm LIKE @qn ESCAPE '\\'` : ''}
-                     OR q.person LIKE @q ESCAPE '\\' OR q.source LIKE @q ESCAPE '\\'
+                     OR q.person LIKE @q ESCAPE '\\' OR q.source LIKE @q ESCAPE '\\' OR q.translation LIKE @q ESCAPE '\\'
                      OR EXISTS(SELECT 1 FROM quote_tags t WHERE t.quote_id = q.id AND t.tag LIKE @q ESCAPE '\\'))`);
         params.q = `%${escapeLike(raw)}%`;
         if (norm) params.qn = `%${escapeLike(norm)}%`;
@@ -588,8 +594,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   /** Legt ein validiertes Zitat an (innerhalb einer Transaktion aufrufen). */
   const quoteHooks = []; // z. B. Webhooks (src/features/integrations.js)
   function insertQuote(userId, v, createdAt = Date.now()) {
-    const id = Number(db.prepare('INSERT INTO quotes (user_id,text,text_norm,person,source,visibility,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)')
-      .run(userId, v.text, normText(v.text), v.person, v.source, v.visibility, createdAt, Date.now()).lastInsertRowid);
+    const id = Number(db.prepare('INSERT INTO quotes (user_id,text,text_norm,person,source,visibility,lang,translation,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(userId, v.text, normText(v.text), v.person, v.source, v.visibility, v.lang ?? null, v.translation ?? null, createdAt, Date.now()).lastInsertRowid);
     saveRelations(id, userId, v);
     // erst nach dem Commit der laufenden Transaktion auslösen
     setImmediate(() => { for (const hook of quoteHooks) { try { hook(userId, id); } catch (e) { console.error('[quote-hook]', e); } } });
@@ -608,8 +614,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       const id = requireOwnQuote(req);
       const v = validateQuote(req.body);
       tx(() => {
-        db.prepare('UPDATE quotes SET text=?, text_norm=?, person=?, source=?, visibility=?, updated_at=? WHERE id=?')
-          .run(v.text, normText(v.text), v.person, v.source, v.visibility, Date.now(), id);
+        db.prepare('UPDATE quotes SET text=?, text_norm=?, person=?, source=?, visibility=?, lang=?, translation=?, updated_at=? WHERE id=?')
+          .run(v.text, normText(v.text), v.person, v.source, v.visibility, v.lang, v.translation, Date.now(), id);
         saveRelations(id, req.user.id, v);
       });
       res.json(getOne(id, req.user.id));
@@ -678,7 +684,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.get('/api/export', requireAuth, readLimiter, (req, res) => {
     const format = req.query.format === 'csv' ? 'csv' : 'json';
     const rows = shape(db.prepare(`${BASE} WHERE q.user_id = @me ORDER BY q.created_at, q.id`).all({ me: req.user.id }));
-    const data = rows.map((q) => ({ text: q.text, person: q.person, source: q.source, tags: q.tags, visibility: q.visibility,
+    const data = rows.map((q) => ({ text: q.text, person: q.person, source: q.source, lang: q.lang ?? '', translation: q.translation ?? '', tags: q.tags, visibility: q.visibility,
       mentions: q.mentions, sharedWith: q.shareWith, groups: q.shareGroups.map((g) => g.name), likes: q.likes,
       createdAt: new Date(q.createdAt).toISOString() }));
     const date = new Date().toISOString().slice(0, 10);
@@ -690,7 +696,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
       return `"${s.replace(/"/g, '""')}"`;
     };
-    const cols = ['text', 'person', 'source', 'tags', 'visibility', 'mentions', 'sharedWith', 'groups', 'likes', 'createdAt'];
+    const cols = ['text', 'person', 'source', 'lang', 'translation', 'tags', 'visibility', 'mentions', 'sharedWith', 'groups', 'likes', 'createdAt'];
     const csv = [cols.join(','), ...data.map((d) => cols.map((c) => cell(d[c])).join(','))].join('\r\n');
     res.type('text/csv; charset=utf-8').send(`\uFEFF${csv}\r\n`);
   });
@@ -700,7 +706,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     try {
       const token = req.params.token;
       if (!/^[A-Za-z0-9_-]{32}$/.test(token)) throw new HttpError(404, 'Dieser Link ist ungültig oder wurde deaktiviert.');
-      const row = db.prepare(`SELECT q.text, q.person, q.source, q.created_at AS createdAt, u.username AS author
+      const row = db.prepare(`SELECT q.text, q.person, q.source, q.lang, q.translation, q.created_at AS createdAt, u.username AS author
                               FROM quotes q JOIN users u ON u.id = q.user_id WHERE q.share_token = ?`).get(token);
       if (!row) throw new HttpError(404, 'Dieser Link ist ungültig oder wurde deaktiviert.');
       res.set('X-Robots-Tag', 'noindex');
@@ -833,6 +839,14 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       ORDER BY n.created_at DESC, n.id DESC LIMIT 50`).all({ me });
     const { unread } = db.prepare(`SELECT COUNT(*) AS unread FROM notifications n WHERE ${VISIBLE_NOTIF} AND n.read_at IS NULL`).get({ me });
     res.json({ items: items.map((i) => ({ ...i, read: !!i.read, quoteText: i.quoteText?.slice(0, 140), commentText: i.commentText?.slice(0, 140) ?? undefined })), unread });
+  });
+
+  // Bevorzugte Sprache (für Push-Nachrichten, E-Mails und andere Geräte)
+  app.put('/api/me/lang', requireAuth, writeLimiter, (req, res) => {
+    const lang = req.body?.lang;
+    if (!LANGS.includes(lang)) return res.status(400).json({ error: 'Ungültige Sprache.' });
+    db.prepare('UPDATE users SET lang = ? WHERE id = ?').run(lang, req.user.id);
+    res.json({ lang });
   });
 
   app.post('/api/notifications/read', requireAuth, writeLimiter, (req, res) => {
