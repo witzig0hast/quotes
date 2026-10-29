@@ -77,7 +77,7 @@ function usernameBase(claims) {
 }
 
 export function createApp({ db, oidc = null, secureCookies = process.env.NODE_ENV === 'production', authLimit = 20,
-  publicDir = PUBLIC_DIR, cacheAssets } = {}) {
+  publicDir = PUBLIC_DIR, cacheAssets, pushSender = null, mailer, publicUrl = process.env.PUBLIC_URL || null } = {}) {
   const assets = createAssets(publicDir, cacheAssets === undefined ? {} : { cache: cacheAssets });
   const passwordLogin = !oidc || oidc.passwordLogin;
   const app = express();
@@ -163,7 +163,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     (passwordLogin ? next() : next(new HttpError(403, 'Anmeldung mit Passwort ist deaktiviert. Bitte SSO verwenden.')));
 
   app.get('/api/config', (req, res) => {
-    res.json({ sso: oidc ? { name: oidc.name } : null, passwordLogin });
+    res.json({ sso: oidc ? { name: oidc.name } : null, passwordLogin,
+      push: featureCtx.pushEnabled ? { publicKey: featureCtx.pushKey } : null, email: !!featureCtx.emailEnabled });
   });
 
   app.post('/api/register', needPasswordLogin, authLimiter, async (req, res, next) => {
@@ -412,9 +413,16 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
 
   // --- Benachrichtigungen ---
   const notifyStmt = db.prepare('INSERT INTO notifications (user_id, type, actor_id, quote_id, group_id, ref_id, created_at) VALUES (?,?,?,?,?,?,?)');
+  const notifyHooks = []; // z. B. Web-Push (src/features/push.js)
   const notify = (userIds, type, actorId, { quoteId = null, groupId = null, refId = null } = {}) => {
     const now = Date.now();
-    for (const uid of new Set(userIds)) if (uid !== actorId) notifyStmt.run(uid, type, actorId, quoteId, groupId, refId, now);
+    for (const uid of new Set(userIds)) {
+      if (uid === actorId) continue;
+      notifyStmt.run(uid, type, actorId, quoteId, groupId, refId, now);
+      for (const hook of notifyHooks) {
+        try { hook(uid, type, actorId, { quoteId, groupId, refId }); } catch (e) { console.error('[notify-hook]', e); }
+      }
+    }
   };
 
   // --- Nutzersuche (für Markieren/Teilen/Gruppen) ---
@@ -818,8 +826,10 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     ACCESS, FOR_ME, BASE, shape, getOne, idParam, memberRole, notify, userInfo,
     resolveUsers, resolveGroups, saveRelations, validateQuote, usernameList, normTag, insertQuote, requireOwnQuote,
     groupDetails, groupGid, isManager, MAX_MEMBERS,
+    onNotify: (fn) => notifyHooks.push(fn), pushSender, mailer, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null,
   });
   registerFeatures(app, featureCtx);
+  app.locals.ctx = featureCtx; // u. a. runDigest für den Server-Zeitplan
 
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Nicht gefunden.')));
 

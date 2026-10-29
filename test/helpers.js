@@ -6,7 +6,9 @@ import { createApp } from '../src/app.js';
 export function startApp(opts = {}) {
   process.env.WIKIPEDIA ??= 'off'; // Tests ohne Netzwerk
   const db = openDb(':memory:');
-  const server = createApp({ db, secureCookies: false, authLimit: 1000, ...opts }).listen(0);
+  const expressApp = createApp({ db, secureCookies: false, authLimit: 1000, ...opts });
+  const server = expressApp.listen(0);
+  server.ctx = expressApp.locals.ctx; // für Tests (z. B. runDigest)
   return { db, server, base: `http://127.0.0.1:${server.address().port}` };
 }
 

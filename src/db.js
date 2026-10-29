@@ -191,6 +191,20 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     );
     CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at);
 
+    -- Web-Push-Abos (ein Eintrag pro Gerät/Browser)
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id         INTEGER PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint   TEXT NOT NULL UNIQUE,
+      p256dh     TEXT NOT NULL,
+      auth       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
+
+    -- Einstellungen der Instanz (z. B. zufälliges Geheimnis für Abmeldelinks)
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
     -- Zwischenspeicher für Wikipedia-Kurzbeschreibungen (Personen-Seiten)
     CREATE TABLE IF NOT EXISTS wiki_cache (
       name       TEXT PRIMARY KEY,
@@ -244,6 +258,11 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   if (!hasColumn('users', 'username_set')) db.exec('ALTER TABLE users ADD COLUMN username_set INTEGER NOT NULL DEFAULT 1');
   // Gesetzt, wenn ein angemeldeter Nutzer sein bestehendes Konto mit SSO verknüpft (statt Login)
   if (!hasColumn('oidc_flows', 'link_user_id')) db.exec('ALTER TABLE oidc_flows ADD COLUMN link_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
+  // E-Mail (optional, nur bestätigt nutzbar) + Wochenrückblick
+  for (const [col, def] of [['email', 'TEXT'], ['email_verified', 'INTEGER NOT NULL DEFAULT 0'], ['email_token_hash', 'TEXT'],
+    ['email_token_expires', 'INTEGER'], ['digest', 'INTEGER NOT NULL DEFAULT 0'], ['last_digest_at', 'INTEGER']]) {
+    if (!hasColumn('users', col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} ${def}`);
+  }
   if (!hasColumn('users', 'is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
   if (!hasColumn('users', 'disabled')) db.exec('ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0');
   // Gruppen-Rollen: alte Tabelle erlaubte nur owner/member -> um "admin" erweitern (verlustfrei)

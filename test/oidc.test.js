@@ -194,7 +194,7 @@ test('Optionen: Registrierung per SSO aus, Passwort-Login aus, /api/config', asy
 
   const ctx = setup({ passwordLogin: false });
   const cfg = await (await fetch(`${ctx.base}/api/config`)).json();
-  assert.deepEqual(cfg, { sso: { name: 'Authentik' }, passwordLogin: false });
+  assert.deepEqual({ sso: cfg.sso, passwordLogin: cfg.passwordLogin }, { sso: { name: 'Authentik' }, passwordLogin: false });
   for (const path of ['/api/login', '/api/register']) {
     const r = await fetch(ctx.base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'abc', password: 'longenough123' }) });
     assert.equal(r.status, 403);
@@ -219,7 +219,8 @@ test('Ohne SSO-Konfiguration: keine Routen, config zeigt sso=null; ENV-Validieru
   const db = openDb(':memory:');
   const server = createApp({ db, secureCookies: false }).listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
-  assert.deepEqual(await (await fetch(`${base}/api/config`)).json(), { sso: null, passwordLogin: true });
+  const cfg0 = await (await fetch(`${base}/api/config`)).json();
+  assert.deepEqual({ sso: cfg0.sso, passwordLogin: cfg0.passwordLogin }, { sso: null, passwordLogin: true });
   assert.equal((await fetch(`${base}/api/auth/oidc/login`, { redirect: 'manual' })).status, 404);
   server.close();
   assert.equal(oidcFromEnv({}), null);

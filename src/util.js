@@ -46,3 +46,6 @@ export function editDistance(a, b, max = 3) {
   }
   return prev[b.length];
 }
+
+/** Für HTML-E-Mails: Nutzerinhalte immer escapen. */
+export const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
