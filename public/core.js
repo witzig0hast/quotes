@@ -91,7 +91,8 @@ export const APP_VERSION = document.querySelector('meta[name="app-version"]')?.c
 export let updateShown = false;
 export function checkVersion(res) {
   const server = res.headers.get('X-App-Version');
-  if (!APP_VERSION || !server || server === APP_VERSION || updateShown) return;
+  // Offline kommen Antworten aus dem Service-Worker-Cache (alte Version) -> kein Update-Hinweis
+  if (!APP_VERSION || !server || server === APP_VERSION || updateShown || !navigator.onLine) return;
   updateShown = true;
   document.body.append(h('div', { class: 'update-bar', role: 'status' },
     h('span', {}, 'Neue Version verfügbar'),

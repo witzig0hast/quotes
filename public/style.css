@@ -615,3 +615,18 @@ dialog.admin-dialog { width: min(760px, calc(100vw - 24px)); }
 /* Mitgliederliste mit Avatar: nur der Name wächst */
 .members li > span.avatar:first-child { flex: none; }
 .members li > .avatar + span { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+
+/* ===================== Etappe D: App, Offline, Push, E-Mail ===================== */
+.offline-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 150;
+  width: max-content; max-width: calc(100vw - 24px); padding: 8px 16px; border-radius: 999px; text-align: center;
+  background: var(--invert-bg); color: var(--invert-fg); font-size: .85rem; font-weight: 600; box-shadow: 0 8px 24px #0004; }
+@media (min-width: 700px) { .offline-bar { bottom: 20px; } }
+label.btn { text-transform: none; letter-spacing: 0; font-size: 1rem; margin: 0; font-weight: 600; }
+.device-rows { display: grid; gap: 10px; }
+.device-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+.device-row > div:first-child { flex: 1 1 200px; display: flex; flex-direction: column; }
+.device-row small { color: var(--muted); font-size: .8rem; }
+.device-row .row { margin: 0; }
+input[type=email] { width: 100%; min-height: var(--tap); padding: 11px 14px; font-size: 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
+input[type=email]:focus { border-color: var(--fg); outline: none; }
+.linkbox input[type=email] { flex: 1; min-width: 0; }

@@ -21,6 +21,8 @@ Benötigt Node.js ≥ 22.13 (nutzt das eingebaute `node:sqlite`). Daten liegen i
 | `OIDC_*`, `PUBLIC_URL` | SSO, siehe unten |
 | `ADMIN_USERS` | Benutzernamen (kommagetrennt), die immer Admin sind |
 | `WIKIPEDIA` / `WIKIPEDIA_LANG` | `off` schaltet Wikipedia-Auszüge auf Personen-Seiten ab; Sprache (Standard `de`) |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web-Push (Schlüssel per `npm run vapid`; Subject z. B. `mailto:admin@example.com`) |
+| `SMTP_URL` / `MAIL_FROM` | E-Mail-Versand, z. B. `smtps://user:pass@mail.example.com:465`; Absender z. B. `Quotes <quotes@example.com>` |
 
 ## Docker
 
@@ -71,6 +73,9 @@ Hinweise:
 - **Gruppen-Rollen & Einladungen**: Besitzer kann Mitglieder zu **Admins** machen (verwalten Mitglieder, benennen um) und die Gruppe **übertragen**; Besitzer und Admins erstellen **Einladungslinks** (1/7/30 Tage, optional begrenzte Nutzungen, widerrufbar). Wer den Link öffnet, meldet sich an und tritt bei
 - **Korrektur vorschlagen**: bei fremden Zitaten über das ⋯-Menü (Text, Person oder Quelle); der Eigentümer sieht unter *Konto → Vorschläge* „Bisher/Neu“ und übernimmt oder lehnt ab
 - **Melden & Admin-Bereich**: Zitate und Kommentare lassen sich melden (Grund + Anmerkung). Admins (*Konto → Admin-Bereich*) sehen Kennzahlen, prüfen Meldungen (Inhalt löschen oder verwerfen) und verwalten Nutzer (sperren/entsperren, Admin-Rechte). Feste Admins per `ADMIN_USERS=name1,name2`; gesperrte Konten werden sofort abgemeldet und können sich nicht mehr anmelden (auch nicht per SSO)
+- **Als App installieren (PWA)**: Startbildschirm-Icon, Vollbild; zuletzt geladene Zitate sind **offline lesbar** (beim Abmelden werden die Offline-Daten vom Gerät gelöscht)
+- **Push-Benachrichtigungen** aufs Handy/den Rechner (*Konto → Dieses Gerät*) – für Markierungen, Kommentare, Gruppen usw.; braucht `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` (`npm run vapid` erzeugt sie). Gesendet wird nur an bekannte Push-Dienste (Google, Mozilla, Apple, Microsoft)
+- **Wochenrückblick per E-Mail** (*Konto → E-Mail & Wochenrückblick*): nur an bestätigte Adressen und nur mit Zustimmung; Abmelden per Link in jeder Mail. Braucht `SMTP_URL` und `PUBLIC_URL`
 - Löschen mit **Rückgängig**, automatisches Nachladen beim Scrollen, Ladeplatzhalter
 - Handy: Navigationsleiste unten mit „+“ in der Mitte; Desktop: Tabs oben
 - Farbschema **System / Hell / Dunkel** umschaltbar; Tastenkürzel `N` (neues Zitat), `/` (Suche), `Strg/⌘ + Enter` (speichern)

@@ -7,6 +7,7 @@ import { personHeader, openRandom, duplicateHint, attachPersonSuggest, importSec
 import { openComments, profileHeader, openStats, openFilters } from './social.js';
 import { openGroups, openGroup, renderInvite } from './groups.js';
 import { openSuggest, openSuggestions, openReport, openAdmin } from './moderation.js';
+import { initPwa, clearOfflineData, takeUrlActions, deviceSection, emailSection } from './pwa.js';
 
 const SSO_ERRORS = {
   access_denied: 'Anmeldung wurde abgebrochen oder abgelehnt.',
@@ -711,7 +712,7 @@ function openAccount() {
     onsubmit: async (e) => {
       e.preventDefault(); err.textContent = '';
       if (!confirm('Konto und alle Zitate endgültig löschen?')) return;
-      try { await api('DELETE', '/api/me', sso ? { confirm: pass.value } : { password: pass.value }); dlg.close(); setUser(null); render(); toast('Konto gelöscht'); }
+      try { await api('DELETE', '/api/me', sso ? { confirm: pass.value } : { password: pass.value }); dlg.close(); clearOfflineData(); setUser(null); render(); toast('Konto gelöscht'); }
       catch (ex) { err.textContent = ex.message; }
     },
   },
@@ -735,6 +736,8 @@ function openAccount() {
         h('a', { class: 'btn', href: '/api/export?format=csv', download: true }, icon('download'), h('span', {}, 'CSV (Excel)')),
         h('a', { class: 'btn', href: '/api/export?format=json', download: true }, icon('download'), h('span', {}, 'JSON')))),
     importSection(() => state.reload?.()),
+    deviceSection(),
+    emailSection(),
     ssoSection(() => dlg),
     h('p', { class: 'hint shortcuts' }, 'Tastenkürzel: N – neues Zitat · / – Suche · Strg/⌘ + Enter – speichern'),
     h('details', { class: 'danger-zone' }, h('summary', {}, 'Konto löschen'), delForm),
@@ -802,6 +805,7 @@ function ssoSection(getDlg) {
 
 async function logout() {
   try { await api('POST', '/api/logout'); } catch { /* egal */ }
+  clearOfflineData();
   setUser(null); render();
 }
 
@@ -828,6 +832,8 @@ function render(opts) {
 
 state.onUnauthorized = () => render();
 
+initPwa();
+
 (async () => {
   if (/^\/[sc]\//.test(location.pathname)) return render();
   try { state.config = await api('GET', '/api/config'); } catch { /* Standard */ }
@@ -845,5 +851,9 @@ state.onUnauthorized = () => render();
     const r = await api('GET', '/api/me');
     setUser(r.user, r.csrf ?? null);
   } catch { /* nicht angemeldet */ }
+  const actions = takeUrlActions();
   render({ justLoggedIn: true });
+  if (actions.toast) setTimeout(() => toast(actions.toast), 100);
+  if (state.user && actions.notifications) setTimeout(() => openNotifications(), 150);
+  if (state.user && actions.newQuote) setTimeout(() => openEditor(), 150);
 })();
