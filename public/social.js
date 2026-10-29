@@ -1,5 +1,6 @@
 // Kommentare, Profile/Folgen, Statistik und der Dialog für die erweiterte Suche.
 import { h, api, toast, modal, icon, plural, relTime, fmtDate, avatar, state } from './core.js';
+import { openReport } from './moderation.js';
 
 // ---------- Kommentare ----------
 export async function openComments(q, { onCount } = {}) {
@@ -19,7 +20,8 @@ export async function openComments(q, { onCount } = {}) {
           c.canDelete ? h('button', { class: 'link-btn sm', type: 'button', 'aria-label': 'Kommentar löschen', onclick: async () => {
             if (!confirm('Kommentar löschen?')) return;
             try { await api('DELETE', `/api/comments/${c.id}`); el.remove(); onCount?.(--count); if (!list.querySelector('.comment')) draw([]); } catch (ex) { toast(ex.message); }
-          } }, 'Löschen') : null),
+          } }, 'Löschen') : null,
+          !c.mine ? h('button', { class: 'link-btn sm', type: 'button', 'aria-label': 'Kommentar melden', onclick: () => openReport({ commentId: c.id }, 'Kommentar') }, 'Melden') : null),
         h('p', {}, ...withMentions(c.body))));
     return el;
   };

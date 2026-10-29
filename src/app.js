@@ -824,7 +824,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Nicht gefunden.')));
 
   // Öffentliche Seite für Freigabe-Links: gleiche SPA, nicht indexieren
-  app.get(['/s/:token', '/c/:token'], (req, res) => assets.sendHtml(res, { 'X-Robots-Tag': 'noindex, nofollow' }));
+  app.get(['/s/:token', '/c/:token', '/g/:token'], (req, res) => assets.sendHtml(res, { 'X-Robots-Tag': 'noindex, nofollow' }));
   app.get(['/', '/index.html'], (req, res) => assets.sendHtml(res));
   app.get('/assets/:version/:file', (req, res, next) => assets.sendAsset(req, res, next));
 

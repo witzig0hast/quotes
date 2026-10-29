@@ -5,6 +5,8 @@ import {
 import { collectionsView, openCollectionEditor, openAddToCollection, openCollectionLink, renderPublicCollection } from './collections.js';
 import { personHeader, openRandom, duplicateHint, attachPersonSuggest, importSection } from './people.js';
 import { openComments, profileHeader, openStats, openFilters } from './social.js';
+import { openGroups, openGroup, renderInvite } from './groups.js';
+import { openSuggest, openSuggestions, openReport, openAdmin } from './moderation.js';
 
 const SSO_ERRORS = {
   access_denied: 'Anmeldung wurde abgebrochen oder abgelehnt.',
@@ -12,12 +14,14 @@ const SSO_ERRORS = {
   invalid_state: 'Die Anmeldung ist abgelaufen. Bitte erneut versuchen.',
   invalid_token: 'Die Anmeldung konnte nicht verifiziert werden.',
   provider_error: 'Der SSO-Anbieter ist gerade nicht erreichbar.',
+  account_disabled: 'Dieses Konto wurde gesperrt.',
   already_linked: 'Dieses SSO-Konto gehört bereits zu einem anderen Quotes-Konto und kann nicht verknüpft werden.',
   has_identity: 'Dein Konto ist bereits mit einem anderen SSO-Konto verknüpft. Löse zuerst die bestehende Verknüpfung.',
 };
 
 // ---------- Login / Registrierung ----------
-function renderAuth(mode = 'login') {
+function renderAuth(mode = 'login', notice = state.authNotice) {
+  state.authNotice = notice;
   const isReg = mode === 'register';
   const err = h('p', { class: 'error', role: 'alert' });
   const user = h('input', { type: 'text', id: 'u', autocomplete: 'username', required: true, maxlength: 30, autocapitalize: 'none', spellcheck: 'false' });
@@ -53,6 +57,7 @@ function renderAuth(mode = 'login') {
     h('div', { class: 'logo auth-logo' }, h('i', {}, '“'), 'Quotes'),
     h('h1', {}, 'Worte, die bleiben.'),
     h('p', { class: 'lead' }, 'Sammle Zitate von Menschen, die dich inspirieren – privat oder geteilt mit anderen.'),
+    notice ? h('p', { class: 'auth-notice' }, notice) : null,
     h('div', { class: 'card' }, ssoBtn, divider, pwBlock))));
   if (passwordLogin) user.focus();
 }
@@ -416,6 +421,10 @@ function quoteCard(q, reload, { compact = false } = {}) {
       ...(inOwnCollection ? [['minus', 'Aus dieser Sammlung entfernen', async () => {
         try { await api('DELETE', `/api/collections/${state.collection.id}/quotes/${q.id}`); card.remove(); toast('Aus der Sammlung entfernt'); } catch (ex) { toast(ex.message); }
       }]] : []),
+      ...(!q.mine ? [
+        ['edit', 'Korrektur vorschlagen …', () => openSuggest(q)],
+        ['flag', 'Melden …', () => openReport({ quoteId: q.id }, 'Zitat'), 'danger'],
+      ] : []),
       ...(q.mine ? [
         ['edit', 'Bearbeiten', () => openEditor(q)],
         ['link', q.link ? 'Link verwalten' : 'Per Link teilen', () => openLink(q, reload)],
@@ -629,11 +638,17 @@ async function openNotifications() {
         comment: [h('b', {}, `@${n.actor}`), ' hat dein Zitat kommentiert'],
         comment_mention: [h('b', {}, `@${n.actor}`), ' hat dich in einem Kommentar erwähnt'],
         follow: [h('b', {}, `@${n.actor}`), ' folgt dir jetzt'],
+        group_owner: [h('b', {}, `@${n.actor}`), ' hat dir die Gruppe ', h('b', {}, `„${n.groupName}“`), ' übertragen'],
+        group_join: [h('b', {}, `@${n.actor}`), ' ist über deine Einladung ', h('b', {}, `„${n.groupName}“`), ' beigetreten'],
+        suggestion: [h('b', {}, `@${n.actor}`), ' schlägt eine Korrektur zu deinem Zitat vor'],
+        suggestion_accepted: [h('b', {}, `@${n.actor}`), ' hat deine Korrektur übernommen 🎉'],
+        suggestion_rejected: [h('b', {}, `@${n.actor}`), ' hat deine Korrektur nicht übernommen'],
       }[n.type] ?? [h('b', {}, `@${n.actor}`), ' hat etwas mit dir geteilt'];
       const open = async () => {
         dlg.close();
         if (n.groupId) return openGroup(n.groupId);
         if (n.type === 'follow') return state.showProfile?.(n.actor);
+        if (n.type === 'suggestion') return openSuggestions({ onChange: () => state.reload?.() });
         try {
           const q = await api('GET', `/api/quotes/${n.quoteId}`);
           if (n.type === 'comment' || n.type === 'comment_mention') openComments(q); else openQuote(q);
@@ -652,90 +667,6 @@ function openQuote(q) {
   const dlg = modal(quoteCard(q, () => { dlg.close(); state.reload?.(); }),
     h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Schließen')));
   dlg.classList.add('quote-dialog');
-}
-
-// ---------- Gruppen ----------
-async function openGroups() {
-  const list = h('div', { class: 'group-list' }, h('p', { class: 'hint' }, 'Wird geladen …'));
-  const err = h('p', { class: 'error', role: 'alert' });
-  const name = h('input', { type: 'text', id: 'g-name', required: true, maxlength: 50, placeholder: 'z. B. Lesekreis' });
-  const members = chipInput({ id: 'g-members' });
-  const create = h('button', { class: 'btn primary', type: 'submit' }, 'Gruppe erstellen');
-  const dlg = modal(h('h2', {}, 'Gruppen'),
-    h('p', { class: 'hint' }, 'Teile Zitate mit allen Mitgliedern einer Gruppe auf einmal.'),
-    list,
-    h('details', { class: 'new-group' }, h('summary', {}, '+ Neue Gruppe'),
-      h('form', {
-        onsubmit: async (e) => {
-          e.preventDefault(); err.textContent = ''; create.disabled = true;
-          try {
-            const g = await api('POST', '/api/groups', { name: name.value, members: members.values() });
-            dlg.close(); toast(`Gruppe „${g.name}“ erstellt`); openGroup(g.id);
-          } catch (ex) { err.textContent = ex.message; create.disabled = false; }
-        },
-      }, h('label', { for: 'g-name' }, 'Name'), name, h('label', { for: 'g-members' }, 'Mitglieder'), members.el, err,
-      h('div', { class: 'row' }, create))),
-    h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Schließen')));
-  try {
-    const { groups } = await api('GET', '/api/groups');
-    if (!groups.length) dlg.querySelector('details').open = true;
-    list.replaceChildren(...(groups.length ? groups.map((g) => h('button', { class: 'group-item', onclick: () => { dlg.close(); openGroup(g.id); } },
-      h('span', { class: 'group-name' }, g.name),
-      h('span', { class: 'hint' }, plural(g.memberCount, 'Mitglied', 'Mitglieder') + (g.isOwner ? ' · Besitzer' : '')), h('span', { 'aria-hidden': 'true' }, '›')))
-      : [h('p', { class: 'hint' }, 'Du bist noch in keiner Gruppe.')]));
-  } catch (ex) { list.replaceChildren(h('p', { class: 'error' }, ex.message)); }
-}
-
-async function openGroup(id) {
-  let g;
-  try { g = await api('GET', `/api/groups/${id}`); } catch (ex) { return toast(ex.message); }
-  const err = h('p', { class: 'error', role: 'alert' });
-  const body = h('div');
-  const dlg = modal(body);
-  const close = () => dlg.close();
-  const refresh = async () => { try { g = await api('GET', `/api/groups/${id}`); draw(); } catch (ex) { close(); toast(ex.message); } };
-
-  function draw() {
-    const add = chipInput({ id: 'gm-add' });
-    const title = h('h2', {}, g.name);
-    const rename = g.isOwner ? h('button', { class: 'btn ghost sm', onclick: async () => {
-      const n = prompt('Neuer Gruppenname', g.name);
-      if (n == null) return;
-      try { g = await api('PATCH', `/api/groups/${id}`, { name: n }); if (state.group?.id === id) state.group.name = g.name; draw(); state.reload?.(); } catch (ex) { toast(ex.message); }
-    } }, 'Umbenennen') : null;
-    body.replaceChildren(
-      h('div', { class: 'dialog-head' }, title, rename),
-      h('button', { class: 'btn primary block', onclick: () => { close(); state.showGroup?.(g); } }, 'Zitate der Gruppe ansehen'),
-      h('label', {}, plural(g.members.length, 'Mitglied', 'Mitglieder')),
-      h('ul', { class: 'members' }, g.members.map((m) => h('li', {},
-        h('span', {}, `@${m.username}`, m.username === state.user.username ? h('small', {}, ' (du)') : null),
-        m.role === 'owner' ? h('span', { class: 'badge' }, 'Besitzer') : null,
-        g.isOwner && m.role !== 'owner' ? h('button', { class: 'btn ghost sm danger', 'aria-label': `@${m.username} entfernen`, onclick: async () => {
-          if (!confirm(`@${m.username} aus der Gruppe entfernen?`)) return;
-          try { await api('DELETE', `/api/groups/${id}/members/${m.id}`); refresh(); } catch (ex) { toast(ex.message); }
-        } }, 'Entfernen') : null))),
-      g.isOwner ? h('form', {
-        onsubmit: async (e) => {
-          e.preventDefault(); err.textContent = '';
-          const usernames = add.values();
-          if (!usernames.length) return;
-          try { g = await api('POST', `/api/groups/${id}/members`, { usernames }); draw(); toast('Hinzugefügt'); } catch (ex) { err.textContent = ex.message; }
-        },
-      }, h('label', { for: 'gm-add' }, 'Mitglieder hinzufügen'), add.el, err, h('div', { class: 'row' }, h('button', { class: 'btn', type: 'submit' }, 'Hinzufügen'))) : null,
-      h('div', { class: 'row split' },
-        g.isOwner
-          ? h('button', { class: 'btn danger', onclick: async () => {
-            if (!confirm(`Gruppe „${g.name}“ löschen? Mit ihr geteilte Zitate sind dann für die Mitglieder nicht mehr sichtbar.`)) return;
-            try { await api('DELETE', `/api/groups/${id}`); close(); toast('Gruppe gelöscht'); leaveGroupView(); } catch (ex) { toast(ex.message); }
-          } }, 'Gruppe löschen')
-          : h('button', { class: 'btn danger', onclick: async () => {
-            if (!confirm(`Gruppe „${g.name}“ verlassen?`)) return;
-            try { await api('DELETE', `/api/groups/${id}/members/${state.user.id}`); close(); toast('Gruppe verlassen'); leaveGroupView(); } catch (ex) { toast(ex.message); }
-          } }, 'Gruppe verlassen'),
-        h('button', { class: 'btn', type: 'button', onclick: close }, 'Schließen')));
-  }
-  const leaveGroupView = () => { if (state.group?.id === id) { state.scope = 'feed'; state.group = null; } state.reload?.(); };
-  draw();
 }
 
 // ---------- Konto ----------
@@ -793,7 +724,9 @@ function openAccount() {
       h('span', { class: 'hint' }, state.user.sso ? 'Konto über SSO' : state.user.ssoLinked ? 'Passwort + SSO' : 'Passwort-Konto'))),
     h('div', { class: 'row left acc-links' },
       h('button', { class: 'btn', onclick: () => { dlg.close(); openStats(); } }, icon('chart', { size: 18 }), h('span', {}, 'Statistik')),
-      h('button', { class: 'btn', onclick: () => { dlg.close(); state.showProfile?.(state.user.username); } }, icon('user', { size: 18 }), h('span', {}, 'Mein Profil'))),
+      h('button', { class: 'btn', onclick: () => { dlg.close(); state.showProfile?.(state.user.username); } }, icon('user', { size: 18 }), h('span', {}, 'Mein Profil')),
+      h('button', { class: 'btn', onclick: () => { dlg.close(); openSuggestions({ onChange: () => state.reload?.() }); } }, icon('edit', { size: 18 }), h('span', {}, 'Vorschläge')),
+      state.user.isAdmin ? h('button', { class: 'btn primary', onclick: () => { dlg.close(); openAdmin(); } }, icon('sliders', { size: 18 }), h('span', {}, 'Admin-Bereich')) : null),
     nameForm,
     themeSection(),
     h('section', { class: 'acc-section' }, h('label', {}, 'Zitate exportieren'),
@@ -881,6 +814,11 @@ document.addEventListener('keydown', (e) => {
 });
 
 function render(opts) {
+  const inv = location.pathname.match(/^\/g\/([A-Za-z0-9_-]+)$/);
+  if (inv) {
+    if (!state.user) return renderAuth('login', 'Melde dich an (oder registriere dich), um der Gruppe beizutreten.');
+    return renderInvite(inv[1], { onDone: (g) => { renderMain(); setTimeout(() => state.showGroup?.(g), 50); } });
+  }
   const c = location.pathname.match(/^\/c\/([A-Za-z0-9_-]+)$/);
   if (c) return renderPublicCollection(c[1]);
   const m = location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)$/);

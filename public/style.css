@@ -564,3 +564,50 @@ dialog.stats-dialog { width: min(680px, calc(100vw - 24px)); }
 /* Korrekturen nach Browser-Test (Etappe B) */
 @media (min-width: 700px) { .toolbar { flex-direction: column; align-items: stretch; } .toolbar .seg { align-self: flex-start; } }
 @media (max-width: 560px) { dialog[class] { width: 100%; max-width: none; } }
+
+/* ===================== Etappe C: Gruppen, Vorschläge, Melden, Admin ===================== */
+.head-actions { display: flex; align-items: center; gap: 4px; }
+dialog.group-dialog .members li { gap: 10px; padding-left: 10px; }
+dialog.group-dialog .members .avatar { width: 30px; height: 30px; font-size: .65rem; }
+dialog.group-dialog .members .act { margin-left: auto; }
+.invite-create { display: flex; flex-wrap: wrap; gap: 8px; }
+.invite-create select { width: auto; flex: 1 1 120px; }
+.invite-create .btn { gap: 6px; }
+.fresh-invite:not(:empty) { margin-top: 12px; padding: 12px; border: 1px dashed var(--line-strong); border-radius: 12px; display: grid; gap: 8px; }
+.fresh-invite .hint { margin: 0; }
+.invite-list { display: grid; gap: 6px; margin-top: 10px; }
+.invite { display: flex; align-items: center; gap: 10px; font-size: .85rem; color: var(--muted); }
+.invite .link-btn { margin-left: auto; }
+.invite-card { max-width: 440px; }
+.invite-title { font-family: var(--serif); font-size: clamp(2rem, 7vw, 2.6rem); line-height: 1.1; margin: 6px 0; }
+.invite-card .btn.block + .btn.block { margin-top: 8px; }
+.auth-notice { margin: -12px 0 18px; padding: 12px 16px; border-radius: 12px; background: var(--invert-bg); color: var(--invert-fg); font-weight: 600; }
+.btn.ghost.block { display: flex; text-decoration: none; }
+
+.sub-head { margin: 18px 0 8px; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.sugg-list, .report-list, .user-list { display: grid; gap: 10px; }
+.sugg, .report { padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; }
+.sugg.small { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: .88rem; }
+.sugg.small span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sugg-head { font-size: .85rem; color: var(--muted); }
+.sugg-head b { color: var(--fg); }
+.diff { display: grid; gap: 6px; margin: 10px 0; font-family: var(--serif); font-size: 1.05rem; }
+.diff del, .diff ins { padding: 6px 10px; border-radius: 8px; text-decoration: none; overflow-wrap: anywhere; }
+.diff del { background: var(--soft); color: var(--muted); text-decoration: line-through; }
+.diff del::before { content: "Bisher  "; font-family: var(--font); font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; text-decoration: none; display: block; }
+.diff ins { border: 1px solid var(--line-strong); }
+.diff ins::before { content: "Neu  "; font-family: var(--font); font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; display: block; }
+.sugg-note { margin: 4px 0 0; font-style: italic; color: var(--muted); font-size: .9rem; }
+.report-snap { margin: 10px 0 6px; padding: 8px 12px; border-left: 3px solid var(--fg); font-family: var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+dialog.admin-dialog { width: min(760px, calc(100vw - 24px)); }
+.admin-seg { display: flex !important; margin: 6px 0 16px; width: max-content; max-width: 100%; }
+.admin-seg button[aria-pressed="true"] { background: var(--invert-bg); color: var(--invert-fg); }
+.admin-body > .btn { margin-top: 14px; }
+.admin-body .subseg { margin: 0 0 12px; }
+.admin-body input[type=search] { margin-bottom: 12px; }
+.admin-user { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+.admin-user > div:first-child { flex: 1 1 220px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.admin-user small { flex-basis: 100%; color: var(--muted); }
+.admin-user .row { margin: 0; }
+.admin-user.disabled { opacity: .7; border-style: dashed; }
