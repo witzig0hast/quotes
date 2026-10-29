@@ -77,7 +77,7 @@ function usernameBase(claims) {
 }
 
 export function createApp({ db, oidc = null, secureCookies = process.env.NODE_ENV === 'production', authLimit = 20,
-  publicDir = PUBLIC_DIR, cacheAssets, pushSender = null, mailer, publicUrl = process.env.PUBLIC_URL || null } = {}) {
+  publicDir = PUBLIC_DIR, cacheAssets, pushSender = null, mailer, publicUrl = process.env.PUBLIC_URL || null, webhookSender = null } = {}) {
   const assets = createAssets(publicDir, cacheAssets === undefined ? {} : { cache: cacheAssets });
   const passwordLogin = !oidc || oidc.passwordLogin;
   const app = express();
@@ -152,6 +152,22 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     return { id: row.id, username: row.username, sso: row.password_hash === UNUSABLE_HASH, usernameSet: !!row.username_set, ssoLinked,
       isAdmin: !!featureCtx.isAdmin?.(row.id) };
   };
+
+  /**
+   * Für sensible Aktionen (API-Schlüssel, 2FA, Passkeys): Passwort-Konten bestätigen mit Passwort,
+   * reine SSO-Konten müssen sich vor höchstens 15 Minuten angemeldet haben.
+   */
+  async function confirmIdentity(req) {
+    const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+    if (row.password_hash === UNUSABLE_HASH) {
+      if (Date.now() - (req.session?.createdAt ?? 0) > 15 * 60 * 1000) {
+        throw new HttpError(403, 'Bitte melde dich kurz ab und wieder an (aus Sicherheitsgründen höchstens 15 Minuten her).');
+      }
+      return;
+    }
+    const password = typeof req.body?.password === 'string' ? req.body.password.slice(0, 200) : '';
+    if (!(await verifyPassword(password, row.password_hash))) throw new HttpError(403, 'Passwort falsch.');
+  }
 
   const sendSession = (res, user, sess) => {
     res.cookie(COOKIE, sess.token, cookieOptions(secureCookies));
@@ -568,10 +584,13 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   });
 
   /** Legt ein validiertes Zitat an (innerhalb einer Transaktion aufrufen). */
+  const quoteHooks = []; // z. B. Webhooks (src/features/integrations.js)
   function insertQuote(userId, v, createdAt = Date.now()) {
     const id = Number(db.prepare('INSERT INTO quotes (user_id,text,text_norm,person,source,visibility,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)')
       .run(userId, v.text, normText(v.text), v.person, v.source, v.visibility, createdAt, Date.now()).lastInsertRowid);
     saveRelations(id, userId, v);
+    // erst nach dem Commit der laufenden Transaktion auslösen
+    setImmediate(() => { for (const hook of quoteHooks) { try { hook(userId, id); } catch (e) { console.error('[quote-hook]', e); } } });
     return id;
   }
 
@@ -826,7 +845,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     ACCESS, FOR_ME, BASE, shape, getOne, idParam, memberRole, notify, userInfo,
     resolveUsers, resolveGroups, saveRelations, validateQuote, usernameList, normTag, insertQuote, requireOwnQuote,
     groupDetails, groupGid, isManager, MAX_MEMBERS,
-    onNotify: (fn) => notifyHooks.push(fn), pushSender, mailer, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null,
+    onNotify: (fn) => notifyHooks.push(fn), onQuoteCreated: (fn) => quoteHooks.push(fn), confirmIdentity, pushSender, webhookSender, mailer, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null,
   });
   registerFeatures(app, featureCtx);
   app.locals.ctx = featureCtx; // u. a. runDigest für den Server-Zeitplan

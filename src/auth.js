@@ -43,7 +43,7 @@ export function getSession(db, token) {
     destroySession(db, token);
     return null;
   }
-  return { csrf: row.csrf, user: { id: row.id, username: row.username } };
+  return { csrf: row.csrf, createdAt: row.expires_at - SESSION_TTL_MS, user: { id: row.id, username: row.username } };
 }
 
 export function destroySession(db, token) {

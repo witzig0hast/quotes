@@ -205,6 +205,33 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
     -- Einstellungen der Instanz (z. B. zufälliges Geheimnis für Abmeldelinks)
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
+    -- API-Schlüssel (nur Hash gespeichert; prefix nur zur Anzeige)
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id           INTEGER PRIMARY KEY,
+      user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name         TEXT NOT NULL,
+      token_hash   TEXT NOT NULL UNIQUE,
+      prefix       TEXT NOT NULL,
+      scope        TEXT NOT NULL CHECK (scope IN ('read','write')),
+      created_at   INTEGER NOT NULL,
+      last_used_at INTEGER
+    );
+
+    -- Webhooks: bei Ereignissen eine signierte POST-Anfrage an eine URL
+    CREATE TABLE IF NOT EXISTS webhooks (
+      id         INTEGER PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      url        TEXT NOT NULL,
+      secret     TEXT NOT NULL,
+      events     TEXT NOT NULL,
+      format     TEXT NOT NULL DEFAULT 'json' CHECK (format IN ('json','slack','discord')),
+      active     INTEGER NOT NULL DEFAULT 1,
+      failures   INTEGER NOT NULL DEFAULT 0,
+      last_status TEXT,
+      last_at    INTEGER,
+      created_at INTEGER NOT NULL
+    );
+
     -- Zwischenspeicher für Wikipedia-Kurzbeschreibungen (Personen-Seiten)
     CREATE TABLE IF NOT EXISTS wiki_cache (
       name       TEXT PRIMARY KEY,

@@ -9,8 +9,9 @@ import { registerSuggestions } from './suggestions.js';
 import { registerAdmin } from './admin.js';
 import { registerPush } from './push.js';
 import { registerEmail } from './email.js';
+import { registerIntegrations } from './integrations.js';
 
-const modules = [registerCollections, registerPeople, registerImport, registerSocial, registerStats, registerGroupsExtra, registerSuggestions, registerAdmin, registerPush, registerEmail];
+const modules = [registerCollections, registerPeople, registerImport, registerSocial, registerStats, registerGroupsExtra, registerSuggestions, registerAdmin, registerPush, registerEmail, registerIntegrations];
 
 export function registerFeatures(app, ctx) {
   for (const register of modules) register(app, ctx);
