@@ -64,7 +64,14 @@ function validateQuote(body) {
   if (body.tags !== undefined && !Array.isArray(body.tags)) throw bad('Ungültige Tag-Liste.');
   const tags = [...new Set((body.tags ?? []).filter((t) => String(t).trim()).map(normTag))];
   if (tags.length > MAX_TAGS) throw bad(`Höchstens ${MAX_TAGS} Tags pro Zitat.`);
-  return { text, person, source, visibility, shareWith, shareGroups, mentions, tags, lang: lang || null, translation: translation || null };
+  // Bild: undefined = unverändert, null = entfernen, sonst ID eines eigenen Uploads
+  let imageId;
+  if (body.imageId === null || body.imageId === '') imageId = null;
+  else if (body.imageId !== undefined) {
+    if (typeof body.imageId !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(body.imageId)) throw bad('Ungültiges Bild.');
+    imageId = body.imageId;
+  }
+  return { text, person, source, visibility, shareWith, shareGroups, mentions, tags, lang: lang || null, translation: translation || null, imageId };
 }
 
 const BIND_COOKIE = 'oidc_bind';
@@ -83,7 +90,7 @@ function usernameBase(claims) {
 }
 
 export function createApp({ db, oidc = null, secureCookies = process.env.NODE_ENV === 'production', authLimit = 20,
-  publicDir = PUBLIC_DIR, cacheAssets, pushSender = null, mailer, publicUrl = process.env.PUBLIC_URL || null, webhookSender = null } = {}) {
+  publicDir = PUBLIC_DIR, cacheAssets, pushSender = null, mailer, publicUrl = process.env.PUBLIC_URL || null, webhookSender = null, ai, aiFetch } = {}) {
   const assets = createAssets(publicDir, cacheAssets === undefined ? {} : { cache: cacheAssets });
   const passwordLogin = !oidc || oidc.passwordLogin;
   const app = express();
@@ -124,7 +131,8 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     req.user = s?.user ?? null;
     const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
     if (unsafe) {
-      if (!req.is('application/json') && req.method !== 'DELETE') return next(new HttpError(415, 'Nur JSON erlaubt.'));
+      const imageUpload = req.method === 'POST' && req.path === '/images' && req.is(['image/jpeg', 'image/png', 'image/webp']);
+      if (!req.is('application/json') && req.method !== 'DELETE' && !imageUpload) return next(new HttpError(415, 'Nur JSON erlaubt.'));
       if (s && !safeEqual(req.get('x-csrf-token') || '', s.csrf)) return next(new HttpError(403, 'Ungültiges CSRF-Token.'));
     }
     next();
@@ -186,7 +194,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
 
   app.get('/api/config', (req, res) => {
     res.json({ sso: oidc ? { name: oidc.name } : null, passwordLogin,
-      push: featureCtx.pushEnabled ? { publicKey: featureCtx.pushKey } : null, email: !!featureCtx.emailEnabled });
+      push: featureCtx.pushEnabled ? { publicKey: featureCtx.pushKey } : null, email: !!featureCtx.emailEnabled, ai: !!featureCtx.aiEnabled });
   });
 
   app.post('/api/register', needPasswordLogin, authLimiter, async (req, res, next) => {
@@ -397,8 +405,9 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
            u.username AS author, (q.user_id = @me) AS mine,
            (SELECT COUNT(*) FROM likes l WHERE l.quote_id = q.id) AS likes,
            EXISTS(SELECT 1 FROM likes l WHERE l.quote_id = q.id AND l.user_id = @me) AS liked,
-           (SELECT COUNT(*) FROM comments cm WHERE cm.quote_id = q.id) AS comments
-    FROM quotes q JOIN users u ON u.id = q.user_id`;
+           (SELECT COUNT(*) FROM comments cm WHERE cm.quote_id = q.id) AS comments,
+           img.id AS imageId, img.width AS imageW, img.height AS imageH
+    FROM quotes q JOIN users u ON u.id = q.user_id LEFT JOIN images img ON img.quote_id = q.id`;
 
   const shape = (rows) => {
     if (!rows.length) return [];
@@ -414,6 +423,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
       WHERE qg.quote_id IN (${placeholders(own)}) ORDER BY g.name`).all(...own), 'quote_id', (r) => ({ id: r.id, name: r.name })) : new Map();
     return rows.map((r) => ({
       id: r.id, text: r.text, person: r.person, source: r.source, lang: r.lang ?? null, translation: r.translation ?? null, createdAt: r.createdAt, author: r.author,
+      image: r.imageId ? { url: `/api/images/${r.imageId}`, width: r.imageW, height: r.imageH } : null,
       mine: !!r.mine, likes: r.likes, liked: !!r.liked, comments: r.comments ?? 0, mentions: mentions.get(r.id) ?? [],
       tags: tags.get(r.id) ?? [],
       // Nur für den Eigentümer: Sichtbarkeit, Empfänger, Gruppen, Freigabe-Link
@@ -558,6 +568,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
 
   /** Speichert Freigaben/Gruppen/Markierungen und benachrichtigt nur NEU hinzugekommene Personen. */
   function saveRelations(quoteId, ownerId, v) {
+    featureCtx.attachImage?.(quoteId, ownerId, v.imageId);
     const ids = (sql) => new Set(db.prepare(sql).all(quoteId).map((r) => r.user_id));
     const prevMentions = ids('SELECT user_id FROM quote_mentions WHERE quote_id = ?');
     const prevShares = ids('SELECT user_id FROM quote_shares WHERE quote_id = ?');
@@ -706,11 +717,13 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     try {
       const token = req.params.token;
       if (!/^[A-Za-z0-9_-]{32}$/.test(token)) throw new HttpError(404, 'Dieser Link ist ungültig oder wurde deaktiviert.');
-      const row = db.prepare(`SELECT q.text, q.person, q.source, q.lang, q.translation, q.created_at AS createdAt, u.username AS author
+      const row = db.prepare(`SELECT q.text, q.person, q.source, q.lang, q.translation, q.created_at AS createdAt, u.username AS author,
+                              EXISTS(SELECT 1 FROM images i WHERE i.quote_id = q.id) AS hasImage
                               FROM quotes q JOIN users u ON u.id = q.user_id WHERE q.share_token = ?`).get(token);
       if (!row) throw new HttpError(404, 'Dieser Link ist ungültig oder wurde deaktiviert.');
       res.set('X-Robots-Tag', 'noindex');
-      res.json(row);
+      const { hasImage, ...rest } = row;
+      res.json({ ...rest, image: hasImage ? { url: `/api/public/quotes/${token}/image` } : null });
     } catch (e) { next(e); }
   });
 
@@ -862,7 +875,7 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
     resolveUsers, resolveGroups, saveRelations, validateQuote, usernameList, normTag, insertQuote, requireOwnQuote,
     groupDetails, groupGid, isManager, MAX_MEMBERS,
     sendSession, createSession: (uid) => createSession(db, uid), destroySession: (t) => destroySession(db, t),
-    onNotify: (fn) => notifyHooks.push(fn), onQuoteCreated: (fn) => quoteHooks.push(fn), confirmIdentity, pushSender, webhookSender, mailer, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null,
+    onNotify: (fn) => notifyHooks.push(fn), onQuoteCreated: (fn) => quoteHooks.push(fn), confirmIdentity, pushSender, webhookSender, ai, aiFetch, mailer, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null,
   });
   registerFeatures(app, featureCtx);
   app.locals.ctx = featureCtx; // u. a. runDigest für den Server-Zeitplan
@@ -881,9 +894,11 @@ export function createApp({ db, oidc = null, secureCookies = process.env.NODE_EN
   app.use((err, req, res, next) => {
     if (err.type === 'entity.too.large') err = new HttpError(413, 'Anfrage zu groß.');
     else if (err.type === 'entity.parse.failed') err = new HttpError(400, 'Ungültiges JSON.');
-    const status = err.status && err.status < 500 ? err.status : 500;
-    if (status === 500) console.error(err);
-    res.status(status).json({ error: status === 500 ? 'Interner Serverfehler.' : err.message });
+    // Eigene HttpErrors (auch 502/503) mit ihrer Meldung; alles Unerwartete als 500 ohne Details
+    const status = err instanceof HttpError ? err.status : err.status && err.status < 500 ? err.status : 500;
+    const internal = status === 500 && !(err instanceof HttpError);
+    if (internal) console.error(err);
+    res.status(status).json({ error: internal ? 'Interner Serverfehler.' : err.message });
   });
 
   return app;

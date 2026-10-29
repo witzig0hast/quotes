@@ -306,6 +306,13 @@ export function openDb(file = process.env.DB_FILE || 'data/quotes.db') {
   db.exec(`CREATE TABLE IF NOT EXISTS webauthn_flows (
     flow_hash TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     kind TEXT NOT NULL, challenge TEXT NOT NULL, rp_id TEXT NOT NULL, origin TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS images (
+    id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    quote_id INTEGER REFERENCES quotes(id) ON DELETE CASCADE,
+    data BLOB NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, bytes INTEGER NOT NULL,
+    ai_result TEXT, created_at INTEGER NOT NULL)`);
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS images_quote ON images(quote_id) WHERE quote_id IS NOT NULL'); // ein Bild pro Zitat
+  db.exec('CREATE INDEX IF NOT EXISTS images_user ON images(user_id, quote_id)');
   if (!hasColumn('users', 'lang')) db.exec('ALTER TABLE users ADD COLUMN lang TEXT');
   if (!hasColumn('quotes', 'lang')) db.exec('ALTER TABLE quotes ADD COLUMN lang TEXT');
   if (!hasColumn('quotes', 'translation')) db.exec('ALTER TABLE quotes ADD COLUMN translation TEXT');

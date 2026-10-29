@@ -41,6 +41,7 @@ export const ICONS = {
   heart: 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z',
   plus: 'M12 5v14M5 12h14',
   copy: 'M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+  scan: 'M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8h10M7 12h10M7 16h6',
   image: 'M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 15l-5-5L5 21',
   more: 'M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM19 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
   sort: 'M3 6h18M6 12h12M10 18h4',
@@ -189,7 +190,8 @@ export function chipInput({ initial = [], placeholder = t('@benutzername'), id, 
   input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; if (input.value.trim()) add(input.value); }, 150));
   renderChips();
   return { el: h('div', { class: 'chip-input', onclick: (e) => { if (e.target === e.currentTarget || e.target === chips) input.focus(); } }, chips, input, list),
-           values: () => { if (input.value.trim()) add(input.value); return values; } };
+           values: () => { if (input.value.trim()) add(input.value); return values; },
+           add: (list) => { for (const v of list) add(v); } };
 }
 
 export function setUser(user, csrf = null) {

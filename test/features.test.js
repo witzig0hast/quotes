@@ -97,7 +97,7 @@ test('Freigabe-Links: öffentlich lesbar ohne Login, nur Eigentümer, widerrufba
   const token = link.slice(3);
   const pub = await fetch(`${base}/api/public/quotes/${token}`);
   const data = await pub.json();
-  assert.deepEqual(Object.keys(data).sort(), ['author', 'createdAt', 'lang', 'person', 'source', 'text', 'translation']); // keine Markierungen o. ä.
+  assert.deepEqual(Object.keys(data).sort(), ['author', 'createdAt', 'image', 'lang', 'person', 'source', 'text', 'translation']); // keine Markierungen o. ä.
   assert.equal(data.text, 'Link-Zitat');
   const page = await fetch(`${base}${link}`);
   assert.equal(page.status, 200); assert.match(page.headers.get('x-robots-tag'), /noindex/);

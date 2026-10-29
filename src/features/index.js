@@ -12,8 +12,10 @@ import { registerEmail } from './email.js';
 import { registerIntegrations } from './integrations.js';
 import { registerTwoFactor } from './twofactor.js';
 import { registerPasskeys } from './passkeys.js';
+import { registerImages } from './images.js';
+import { registerAi } from './ai.js';
 
-const modules = [registerCollections, registerPeople, registerImport, registerSocial, registerStats, registerGroupsExtra, registerSuggestions, registerAdmin, registerPush, registerEmail, registerIntegrations, registerTwoFactor, registerPasskeys];
+const modules = [registerCollections, registerPeople, registerImport, registerSocial, registerStats, registerGroupsExtra, registerSuggestions, registerAdmin, registerPush, registerEmail, registerIntegrations, registerTwoFactor, registerPasskeys, registerImages, registerAi];
 
 export function registerFeatures(app, ctx) {
   for (const register of modules) register(app, ctx);

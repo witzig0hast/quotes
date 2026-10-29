@@ -70,7 +70,7 @@ test('Sammlungs-Link: öffentlich nur öffentliche + eigene Zitate, widerrufbar'
   const data = await r.json();
   assert.deepEqual(data.quotes.map((q) => q.text).sort(), ['meins, privat', 'von b öffentlich']);
   assert.ok(!JSON.stringify(data).includes(b.name + '"]')); // keine Markierungen
-  assert.deepEqual(Object.keys(data.quotes[0]).sort(), ['author', 'createdAt', 'person', 'source', 'text']);
+  assert.deepEqual(Object.keys(data.quotes[0]).sort(), ['author', 'createdAt', 'lang', 'person', 'source', 'text', 'translation']);
   const page = await fetch(`${app.base}${link}`);
   assert.equal(page.status, 200); assert.match(page.headers.get('x-robots-tag'), /noindex/);
   await a.req('DELETE', `/api/collections/${c.id}/link`);

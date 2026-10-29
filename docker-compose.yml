@@ -12,11 +12,22 @@ services:
     volumes:
       - quotes-data:/data
     read_only: true
+    tmpfs: [/tmp]                 # Bildverarbeitung braucht ggf. temporären Platz
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  # Optional: lokale KI für „Zitat aus Foto erkennen“ (danach: docker compose exec ollama ollama pull qwen2.5vl:7b)
+  # und in .env: OLLAMA_URL=http://ollama:11434 – Ollama ist dann nur im internen Docker-Netz erreichbar.
+  # ollama:
+  #   image: ollama/ollama   # Version festpinnen
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ollama-models:/root/.ollama
+  #   # GPU (NVIDIA): deploy: { resources: { reservations: { devices: [{ capabilities: [gpu] }] } } }
+
 volumes:
   quotes-data:
+  # ollama-models:
 
 # Optional: gemeinsames Netzwerk mit authentik / Reverse-Proxy
 # networks:

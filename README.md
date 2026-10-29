@@ -23,6 +23,8 @@ Benötigt Node.js ≥ 22.13 (nutzt das eingebaute `node:sqlite`). Daten liegen i
 | `WIKIPEDIA` / `WIKIPEDIA_LANG` | `off` schaltet Wikipedia-Auszüge auf Personen-Seiten ab; Sprache (Standard `de`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web-Push (Schlüssel per `npm run vapid`; Subject z. B. `mailto:admin@example.com`) |
 | `SMTP_URL` / `MAIL_FROM` | E-Mail-Versand, z. B. `smtps://user:pass@mail.example.com:465`; Absender z. B. `Quotes <quotes@example.com>` |
+| `OLLAMA_URL` / `OLLAMA_MODEL` | Bilderkennung mit lokalem Ollama, z. B. `http://ollama:11434` und ein Vision-Modell wie `qwen2.5vl:7b`, `gemma3:12b` oder `llama3.2-vision` |
+| `AI_API_URL` / `AI_API_KEY` / `AI_MODEL` | Alternativ jede OpenAI-kompatible API (z. B. `https://api.openai.com/v1`, LM Studio, vLLM) |
 | `WEBHOOK_ALLOW_PRIVATE=1` | Webhooks auch an interne Adressen (LAN, z. B. Home-Assistant) erlauben – Standard: nur öffentliche |
 
 ## Docker
@@ -81,6 +83,8 @@ Hinweise:
 - **Zwei-Faktor-Anmeldung (TOTP)** für Passwort-Konten: QR-Code für jede Authenticator-App, 10 einmalige Wiederherstellungscodes (neu erzeugbar). SSO-Konten nutzen die 2FA ihres Anbieters
 - **API-Schlüssel** (*Konto → Integrationen*): `Authorization: Bearer qk_…` für `/api/v1/quotes`, `/api/v1/random`, `/api/v1/daily` (auch `?format=text` für Widgets/Kurzbefehle) und – mit Schreibrecht – `POST /api/v1/quotes`. Übersicht unter `GET /api/v1`
 - **Webhooks**: bei neuem eigenem Zitat oder neuer Benachrichtigung; als signiertes JSON (`X-Quotes-Signature: sha256=<HMAC>`) oder direkt im Slack-/Discord-Format; nach 10 Fehlschlägen automatisch pausiert
+- **Bilder an Zitaten**: ein Foto pro Zitat (JPEG/PNG/WebP, bis 8 MB), Großansicht per Tippen; sichtbar nur für die, die das Zitat sehen dürfen (auch über den Freigabe-Link)
+- **Zitat aus Foto erkennen (KI)**: Foto von Buchseite, Screenshot oder Postkarte wählen – ein Vision-Modell (lokal über Ollama oder OpenAI-kompatibel) liest Text, Person, Quelle, Sprache und Tags und füllt den Editor vor. Gespeichert wird erst nach Prüfen und „Speichern“; das Foto kann am Zitat bleiben
 - **Deutsch & Englisch**: Sprache folgt dem Browser, umschaltbar unter *Konto → Darstellung* oder auf der Anmeldeseite; die Wahl wird am Konto gespeichert (gilt auf allen Geräten sowie für Push-Nachrichten und E-Mails). Datumsangaben im passenden Format. Neue Texte: deutsch im Code, englisch in `public/i18n-en.js` – ein Test meldet fehlende Übersetzungen
 - **Originalsprache & Übersetzung** pro Zitat (optional, im Editor unter „Originalsprache & Übersetzung“): die Übersetzung steht unter dem Original, wird mit durchsucht und ist in Export/Import (`lang`, `translation`) und API enthalten
 - Löschen mit **Rückgängig**, automatisches Nachladen beim Scrollen, Ladeplatzhalter
@@ -104,6 +108,8 @@ Hinweise:
 - Passkeys: Challenge einmalig und 5 Minuten gültig, Origin/RP-ID-Prüfung; Schlüssel ohne Nutzer-Verifizierung zählen bei aktivierter 2FA nur als ein Faktor
 - API-Schlüssel nur als Hash gespeichert, Rechte „lesen“ oder „lesen + schreiben“, eigenes Rate-Limit
 - Webhooks: kein Versand an interne/private Adressen (auch nicht per DNS-Umleitung), Zeitlimit, keine Weiterleitungen
+- **Bilder**: Dateisignatur wird geprüft (kein SVG/GIF/HTML), danach wird jedes Bild serverseitig **neu kodiert** (WebP, max. 1600 px, Pixel-Limit gegen Dekompressionsbomben) – EXIF/GPS-Daten und angehängte Inhalte (Polyglot-Dateien) fallen dabei weg. Ausgeliefert mit `nosniff`, `CSP: sandbox`, nur an Berechtigte; nie in nginx/Cloudflare gecacht. Gespeichert in der SQLite-Datenbank (eine Datei fürs Backup); ungenutzte Uploads werden nach 24 h gelöscht
+- **KI & Prompt-Injection**: Text im Bild gilt nur als Daten. Das Modell hat keine Werkzeuge und keinen Zugriff auf andere Daten, muss JSON nach festem Schema liefern; die Antwort wird streng geprüft (nur bekannte Felder, Längen, Sprache, Tags, unsichtbare Steuer-/Bidi-Zeichen entfernt). Nichts wird automatisch gespeichert, geteilt oder ausgeführt – das Ergebnis ist nur ein Vorschlag im Editor; Links/„Anweisungen“ im erkannten Text werden zusätzlich als Warnung angezeigt. Die Modell-Adresse setzt nur der Admin (kein SSRF), Rate-Limit pro Nutzer, max. 2 gleichzeitige Erkennungen; jedes Ergebnis wird am Bild protokolliert
 - Gruppen: nur der Besitzer verwaltet Mitglieder; teilen nur mit Gruppen, in denen man Mitglied ist
 
 ## SSO mit authentik (oder jedem OpenID-Connect-Anbieter)

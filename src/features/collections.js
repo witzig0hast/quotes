@@ -167,7 +167,7 @@ export function registerCollections(app, ctx) {
     if (!/^[A-Za-z0-9_-]{32}$/.test(token)) throw gone();
     const c = db.prepare('SELECT c.*, u.username AS owner FROM collections c JOIN users u ON u.id = c.owner_id WHERE c.share_token = ?').get(token);
     if (!c) throw gone();
-    const quotes = db.prepare(`SELECT q.text, q.person, q.source, q.created_at AS createdAt, u.username AS author
+    const quotes = db.prepare(`SELECT q.text, q.person, q.source, q.lang, q.translation, q.created_at AS createdAt, u.username AS author
                                FROM collection_quotes cq JOIN quotes q ON q.id = cq.quote_id JOIN users u ON u.id = q.user_id
                                WHERE cq.collection_id = ? AND (q.visibility = 'public' OR q.user_id = ?)
                                ORDER BY cq.added_at DESC LIMIT 200`).all(c.id, c.owner_id);

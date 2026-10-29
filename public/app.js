@@ -7,6 +7,7 @@ import { openGroups, openGroup, renderInvite } from './groups.js';
 import { openSuggest, openSuggestions, openReport, openAdmin } from './moderation.js';
 import { initPwa, clearOfflineData, takeUrlActions, deviceSection, emailSection } from './pwa.js';
 import { QUOTE_LANGS, LANGS, setLang } from './i18n.js';
+import { imageField, aiScanButton, quoteImage } from './images.js';
 import { passkeyLoginButton, twoFactorForm, openSecurity, openIntegrations } from './security.js';
 
 const SSO_ERRORS = {
@@ -86,6 +87,7 @@ async function renderPublic(token) {
     document.title = `„${q.text.slice(0, 60)}${q.text.length > 60 ? '…' : ''}“ – ${q.person}`;
     body.append(h('article', { class: 'card quote quote-lg' },
       quoteText(q),
+      quoteImage(q),
       h('div', {}, h('span', { class: 'person' }, `— ${q.person}`), q.source ? h('span', { class: 'source' }, `, ${q.source}`) : null),
       h('div', { class: 'meta' }, h('span', {}, t('geteilt von @{0}', q.author)), h('span', {}, fmtDate(q.createdAt)))));
   } catch (ex) {
@@ -453,6 +455,7 @@ function quoteCard(q, reload, { compact = false } = {}) {
         VIS[q.visibility] + (sharedCount ? ` · ${sharedCount}` : '')) : null,
       q.mine && q.link ? h('span', { class: 'badge', title: t('Per Link geteilt') }, icon('link', { size: 12 })) : null),
     quoteText(q),
+    quoteImage(q),
     h('div', { class: 'qsrc' },
       h('button', { class: 'person-link', title: t('Alle Zitate von {0}', q.person), onclick: () => state.filterBy?.({ person: q.person }) }, `— ${q.person}`),
       q.source ? h('span', { class: 'source' }, `, ${q.source}`) : null),
@@ -552,6 +555,7 @@ async function openEditor(q) {
     h('label', { for: 'f-lang' }, t('Originalsprache (optional)')), langSel,
     h('label', { for: 'f-translation' }, t('Übersetzung')), translation,
     h('div', { class: 'hint' }, t('Wird unter dem Original angezeigt und bei der Suche mit durchsucht.')));
+  const image = imageField(q?.image);
   let tagCache = null;
   const tags = chipInput({ id: 'f-tags', initial: q?.tags ?? [], prefix: '#', placeholder: '#tag', suggest: async (s) => {
     tagCache ??= (await api('GET', '/api/tags').catch(() => ({ tags: [] }))).tags.map((t) => t.tag);
@@ -567,6 +571,18 @@ async function openEditor(q) {
   const opts = [['private', t('Privat'), t('Nur du (und Markierte)')], ['shared', t('Geteilt'), t('Personen & Gruppen')], ['public', t('Öffentlich'), t('Alle Nutzer')]];
   const radios = opts.map(([v, label, d]) => h('label', {}, h('input', { type: 'radio', name: 'vis', value: v, checked: v === current }), h('span', {}, label, h('small', {}, d))));
   const save = h('button', { class: 'btn primary', type: 'submit', title: t('Speichern (Strg/⌘ + Enter)') }, t('Speichern'));
+  // KI-Vorschlag aus Foto: füllt nur das Formular – nichts wird ohne „Speichern“ übernommen
+  const scan = aiScanButton((r, img) => {
+    image.set(img);
+    if (!r) return;
+    if (text.value.trim() && text.value.trim() !== r.text && !confirm(t('Den vorhandenen Text durch den erkannten ersetzen?'))) return;
+    text.value = r.text; updateCounter(); text.dispatchEvent(new Event('input'));
+    if (r.person) person.value = r.person;
+    if (r.source) source.value = r.source;
+    if (r.lang && [...langSel.options].some((o) => o.value === r.lang)) { langSel.value = r.lang; }
+    if (r.tags?.length) tags.add(r.tags);
+    text.focus();
+  });
   let dlg;
   const sync = () => { shareBox.hidden = dlg.querySelector('input[name=vis]:checked').value !== 'shared'; };
   const form = h('form', {
@@ -576,7 +592,7 @@ async function openEditor(q) {
       e.preventDefault();
       save.disabled = true; err.textContent = '';
       const visibility = dlg.querySelector('input[name=vis]:checked').value;
-      const body = { text: text.value, person: person.value, source: source.value, lang: langSel.value, translation: translation.value, visibility, tags: tags.values(), mentions: mentions.values(),
+      const body = { text: text.value, person: person.value, source: source.value, lang: langSel.value, translation: translation.value, imageId: image.value(), visibility, tags: tags.values(), mentions: mentions.values(),
         shareWith: shareUsers.values(), shareGroups: [...groupBox.querySelectorAll('input:checked')].map((i) => Number(i.value)) };
       try {
         await (q ? api('PUT', `/api/quotes/${q.id}`, body) : api('POST', '/api/quotes', body));
@@ -586,12 +602,14 @@ async function openEditor(q) {
   },
   h('div', { class: 'dialog-head' }, h('h2', {}, q ? t('Zitat bearbeiten') : t('Neues Zitat')),
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Schließen'), onclick: () => dlg.close() }, '✕')),
+  scan,
   h('div', { class: 'label-row' }, h('label', { for: 'f-text' }, t('Zitat')), counter), text,
   duplicateHint(text, q?.id, { onOpen: (d) => { dlg.close(); openQuote(d); } }), attachPersonSuggest(person),
   h('div', { class: 'grid2' },
     h('div', {}, h('label', { for: 'f-person' }, t('Person')), person),
     h('div', {}, h('label', { for: 'f-source' }, t('Quelle')), source)),
   langBox,
+  h('label', {}, t('Bild (optional)')), image.el,
   h('label', { for: 'f-tags' }, t('Tags')), tags.el,
   h('label', { for: 'f-mentions' }, t('Personen markieren')), mentions.el,
   h('div', { class: 'hint' }, t('Markierte Nutzer sehen das Zitat immer und werden benachrichtigt.')),
